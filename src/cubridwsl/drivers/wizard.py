@@ -6,7 +6,7 @@ Back. The point of this driver is to prove that a wizard install and a silent
 install reach a machine that passes the SAME assertions; anything beyond the
 default path adds maintenance before that claim is even established.
 
-Four choices worth understanding before changing anything here:
+Five choices worth understanding before changing anything here:
 
 **Windows are found with ctypes, not pywinauto.** Enumerating top-level windows
 is cheap and exact; a backend-wide pywinauto search walks the UIA tree of every
@@ -22,6 +22,13 @@ belonging to a page that is not on screen.
 **It matches every language at once.** The MSI is multi-language through
 transforms, so the language on screen is not simply the system locale. Every
 logical string is matched against all languages in constants.WIZARD_STRINGS.
+
+**Every wait watches for a dialog it cannot advance past.** The environment
+check raises a modal warning per failed prerequisite and WiX raises a fatal
+error dialog when the install fails. A driver that only waits for the next page
+sits in front of those until its timeout -- up to the whole install budget on
+the step where the WSL import happens -- and then reports that a page never
+appeared, which is true and useless.
 
 **It never asserts.** Reaching Finish is not evidence of a correct install.
 
@@ -87,24 +94,50 @@ def _enumerate_windows() -> list[tuple[int, str, str]]:
     return results
 
 
-def find_window(titles: list[str], *, timeout: float = 120,
-                interval: float = 0.5) -> Window:
-    """Wait for a visible top-level window whose title contains any of these."""
+def find_window(titles: list[str], *, timeout: float = 120, interval: float = 0.5,
+                accept: Callable[[Window], bool] | None = None,
+                guard: Callable[[], None] | None = None) -> Window:
+    """Wait for a visible top-level window whose title contains any of these.
+
+    `accept` is a second test a candidate must pass. A title alone is not always
+    enough to identify a page -- the completion dialog is the case that matters
+    -- so the caller can insist on, say, an MSI-class window that really carries
+    a Finish button.
+
+    `guard` is called on every poll and may raise. That is what stops this from
+    waiting out its whole timeout in front of a modal error dialog and then
+    reporting the wrong thing: the page it was waiting for never appeared, but
+    the reason is on screen and the guard reads it.
+    """
     patterns = [re.compile(f".*{re.escape(t)}.*") for t in titles]
     deadline = time.time() + timeout
     seen: dict[str, str] = {}
+    rejected: dict[str, str] = {}
     while True:
+        if guard is not None:
+            guard()
         for handle, title, class_name in _enumerate_windows():
             if not title:
                 continue
             seen[title] = class_name
-            if any(rx.search(title) for rx in patterns):
-                return Window(handle, title, class_name)
+            if not any(rx.search(title) for rx in patterns):
+                continue
+            candidate = Window(handle, title, class_name)
+            if accept is None or accept(candidate):
+                return candidate
+            rejected[title] = class_name
         if time.time() >= deadline:
             break
         time.sleep(interval)
+
+    detail = ""
+    if rejected:
+        # The difference between "the page never came up" and "something that
+        # looked like it came up and was not it" is most of the diagnosis.
+        detail = ("\nWindows that matched the title but were rejected:\n"
+                  + "\n".join(f"  {t!r} [{c}]" for t, c in sorted(rejected.items())))
     raise WizardError(
-        f"no window matching {titles} appeared within {timeout:.0f}s.\n"
+        f"no window matching {titles} appeared within {timeout:.0f}s.{detail}\n"
         "Visible top-level windows were:\n"
         + ("\n".join(f"  {t!r} [{c}]" for t, c in sorted(seen.items())) or "  (none)"))
 
@@ -133,6 +166,78 @@ def assert_no_setup_window(titles: list[str]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Dialogs that stop the wizard
+#
+# The installer's environment check raises a modal warning per failed
+# prerequisite, and WiX raises CustomFatalErrorDlg when the install itself
+# fails. Both are invisible to a driver that only waits for the next page: it
+# waits out its whole timeout -- up to the full install budget on the step where
+# the WSL import happens -- and then reports that a page never appeared, which
+# is true and useless. The reason was on screen the entire time.
+#
+# So every wait polls for them. Fatal ones abort with the dialog's own text;
+# the reboot advisory is acknowledged and the run continues, which is what the
+# dev team's prototype does.
+# --------------------------------------------------------------------------- #
+def _dialog_text(handle: int) -> str:
+    """The longest static text in a dialog -- in practice its message body."""
+    try:
+        win, _ = _connect(handle)
+        texts = []
+        for control in win.children():
+            try:
+                info = control.element_info
+                if (getattr(info, "class_name", "") == "Static"
+                        or getattr(info, "control_type", "") == "Text"):
+                    texts.append((control.window_text() or "").strip())
+            except Exception:
+                continue
+        return max(texts, key=len) if texts else ""
+    except Exception:
+        return ""
+
+
+def check_for_blocking_dialog(say: Callable[[str], None] | None = None) -> None:
+    """Raise if a dialog the wizard cannot advance past is on screen.
+
+    The one advisory case -- WSL wants a reboot -- is acknowledged and the run
+    continues; every other environment-check warning means the installer has
+    refused, and clicking OK would only produce a failed install later.
+    """
+    say = say or (lambda _text: None)
+    for handle, title, _class_name in _enumerate_windows():
+        if not title:
+            continue
+
+        for name, titles in constants.WIZARD_WARNINGS.items():
+            if not any(t in title for t in titles):
+                continue
+            if name == constants.ADVISORY_WARNING:
+                try:
+                    win, _ = _connect(handle)
+                    click_button(win, list(constants.OK_BUTTONS), timeout=10)
+                except WizardError as exc:
+                    raise WizardError(
+                        f"an advisory dialog {title!r} is on screen and could "
+                        f"not be dismissed, so the wizard cannot continue: {exc}"
+                    ) from exc
+                say(f"    wizard   : acknowledged advisory dialog {title!r}")
+                return
+            raise WizardError(
+                f"the installer's environment check refused to continue: "
+                f"{title!r} ({name}).\n"
+                f"{_dialog_text(handle)}\n"
+                "This is the product telling you the machine does not meet a "
+                "prerequisite. Fix the machine; do not click past it.")
+
+        if any(t in title for t in constants.WIZARD_FAILURE_TITLES):
+            raise WizardError(
+                f"the installer reported failure: {title!r}\n"
+                f"{_dialog_text(handle)}\n"
+                "The bundle log named in the run directory carries the detail.")
+
+
+# --------------------------------------------------------------------------- #
 # Controls (pywinauto)
 # --------------------------------------------------------------------------- #
 def _accelerator_regex(text: str) -> str:
@@ -143,6 +248,11 @@ def _accelerator_regex(text: str) -> str:
     through every backend, so it is matched as optional rather than assumed.
     """
     return re.escape(text).replace("&", "&?")
+
+
+def _label_regex(labels: list[str]) -> str:
+    """One alternation matching any of these labels, accelerators optional."""
+    return "|".join(f"(?:{_accelerator_regex(label)})" for label in labels)
 
 
 def _connect(handle: int):
@@ -167,7 +277,8 @@ def _connect(handle: int):
     raise WizardError(f"could not attach to window {handle}: " + "; ".join(errors))
 
 
-def _matching_controls(win, title_re: str, kinds: tuple[str, ...]) -> list:
+def _matching_controls(win, title_re: str, kinds: tuple[str, ...], *,
+                       require_enabled: bool = True) -> list:
     """Every VISIBLE, ENABLED control on the current page matching a label.
 
     Visibility is the whole point of this function; see the module docstring on
@@ -184,7 +295,9 @@ def _matching_controls(win, title_re: str, kinds: tuple[str, ...]) -> list:
                 continue
             if not pattern.match((control.window_text() or "").strip()):
                 continue
-            if not control.is_visible() or not control.is_enabled():
+            if not control.is_visible():
+                continue
+            if require_enabled and not control.is_enabled():
                 continue
         except Exception:
             continue
@@ -220,7 +333,7 @@ def click_button(win, labels: list[str], *, timeout: float = 30,
     Retries rather than failing on the first miss: a page can exist before its
     controls are created, and a page can still be animating in.
     """
-    title_re = "|".join(f"(?:{_accelerator_regex(label)})" for label in labels)
+    title_re = _label_regex(labels)
     deadline = time.time() + timeout
     last = "no matching button was visible and enabled"
     while True:
@@ -241,6 +354,15 @@ def click_button(win, labels: list[str], *, timeout: float = 30,
         if time.time() >= deadline:
             break
         time.sleep(interval)
+    # "Not visible and enabled" covers two completely different situations, and
+    # the fix differs: a missing button means the wrong page, a disabled one
+    # means the page will not let us leave yet (the licence checkbox, most
+    # often). Say which.
+    disabled = [c for c in _matching_controls(win, title_re, ("Button", "CheckBox"),
+                                              require_enabled=False)]
+    if disabled:
+        last = (f"the button exists but is disabled: "
+                + ", ".join(repr(c.window_text()) for c in disabled))
     raise WizardError(f"could not click any of {labels} within {timeout:.0f}s. "
                       f"Last: {last}.\n" + _describe_controls(win))
 
@@ -268,7 +390,7 @@ def tick_checkbox(win, labels: list[str], *, timeout: float = 30,
     The five install-option checkboxes are declared Text=" " in the product and
     expose no accessible name at all, which is why this driver is defaults-only.
     """
-    title_re = "|".join(f"(?:{_accelerator_regex(label)})" for label in labels)
+    title_re = _label_regex(labels)
     deadline = time.time() + timeout
     last = "no matching checkbox was visible and enabled"
     while True:
@@ -345,6 +467,26 @@ class WizardResult:
                 "steps": [s.__dict__ for s in self.steps]}
 
 
+def _is_completion_dialog(window: Window) -> bool:
+    """Whether this really is the MSI's completion page.
+
+    Its title is not enough on its own -- the dev team's prototype hit the same
+    ambiguity and validates the same two things. A window qualifies only if it
+    is an MSI dialog class AND actually carries a Finish button, which also
+    rules out accepting the page a moment before its controls exist.
+    """
+    if (window.class_name
+            and not window.class_name.startswith(constants.MSI_DIALOG_CLASS_PREFIX)):
+        return False
+    try:
+        win, _ = _connect(window.handle)
+    except WizardError:
+        return False
+    title_re = _label_regex(constants.ui_strings("btn_finish"))
+    return bool(_matching_controls(win, title_re, ("Button",),
+                                   require_enabled=False))
+
+
 def _assert_defaults_only(options: dict[str, Any]) -> None:
     """Refuse options this driver cannot actually honour.
 
@@ -358,9 +500,49 @@ def _assert_defaults_only(options: dict[str, Any]) -> None:
     if differing:
         raise WizardError(
             f"the wizard driver drives DEFAULTS ONLY, but was asked for "
-            f"{differing}. Driving the option checkboxes needs label-pairing by "
-            'screen position -- the product declares them Text=" " and they '
-            "expose no accessible name -- and that is not implemented.")
+            f"{differing}. See _find_option_checkboxes() for how to add it.")
+
+
+def _find_option_checkboxes(win) -> list:
+    """The Installation Options checkboxes, ordered as they appear on screen.
+
+    NOT USED on the default path, and kept because it is the answer to "how do I
+    drive the options?" -- the technique is from the dev team's prototype and is
+    not obvious.
+
+    The product declares these checkboxes with `Text=" "`, so they carry no
+    label and no accessible name: they cannot be found by title, and on the
+    win32 backend a checkbox and a push button are both class `Button`, so
+    "the Buttons on this page" also matches Back, Next and Cancel. What
+    separates them is that the option checkboxes are the only Buttons with
+    EMPTY text. Sorting those by screen position (top, then left) gives them in
+    the order the dialog lists them, and that order is the only thing tying a
+    checkbox to an option.
+
+    The completion page uses the same trick with exactly one box: its single
+    empty-text Button is START_TRAY_APP. Note where that leaves the option --
+    the wizard expresses START_TRAY_APP on the FINISH page, not on the options
+    page, so a wizard-driven scenario that changes it must act after the install
+    has already run.
+
+    Order-by-position is positional coupling: if the product reorders the
+    dialog, this silently drives the wrong option. Any case built on it should
+    assert the resulting state rather than trust the click.
+    """
+    boxes = []
+    for control in win.children():
+        try:
+            info = control.element_info
+            if (getattr(info, "class_name", "") or "") != "Button":
+                continue
+            if (control.window_text() or "").strip():
+                continue
+            rect = control.rectangle()
+            boxes.append((rect.top, rect.left, control))
+        except Exception:
+            continue
+    boxes.sort(key=lambda item: (item[0], item[1]))
+    return [control for _top, _left, control in boxes]
 
 
 def install(package: config_mod.InstallerPackage, options: dict[str, Any],
@@ -379,11 +561,17 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     started = time.monotonic()
     deadline = started + timeout
 
-    def step(name: str, titles: list[str], action, *, wait: float | None = None) -> None:
+    def guard() -> None:
+        """Checked on every poll of every wait -- see check_for_blocking_dialog."""
+        check_for_blocking_dialog(say)
+
+    def step(name: str, titles: list[str], action, *, wait: float | None = None,
+             accept=None) -> None:
         if time.monotonic() > deadline:
             raise TimeoutError(f"ran out of time before step {name!r}")
         step_started = time.monotonic()
-        window = find_window(titles, timeout=wait or step_timeout)
+        window = find_window(titles, timeout=wait or step_timeout,
+                             accept=accept, guard=guard)
         win, backend = _connect(window.handle)
         performed = action(win)
         elapsed = time.monotonic() - step_started
@@ -422,7 +610,8 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
         # far the longest step, so it gets the whole remaining budget.
         remaining = max(60.0, deadline - time.monotonic())
         step("finish", strings("finish_title"),
-             lambda w: click_button(w, strings("btn_finish")), wait=remaining)
+             lambda w: click_button(w, strings("btn_finish")), wait=remaining,
+             accept=_is_completion_dialog)
 
         # Burn shows its own success page afterwards. Closing it is what makes
         # the run repeatable -- a bundle window left open blocks the next launch.

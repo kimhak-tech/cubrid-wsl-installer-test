@@ -126,6 +126,7 @@ class StartupState:
 
     tray_app: str | None
     starter: str | None
+    error: str | None = None
 
     @property
     def tray_app_registered(self) -> bool:
@@ -138,7 +139,10 @@ class StartupState:
 
 def read_startup() -> StartupState:
     """An absent value means not registered, not an error."""
-    values = read_key("HKCU", constants.RUN_KEY) or {}
+    try:
+        values = read_key("HKCU", constants.RUN_KEY) or {}
+    except Exception as exc:
+        return StartupState(None, None, error=f"{type(exc).__name__}: {exc}")
     return StartupState(values.get(constants.RUN_VALUE_TRAY),
                         values.get(constants.RUN_VALUE_STARTER))
 
@@ -156,6 +160,7 @@ class ArpState:
     uninstall_string: str | None = None
     location: str | None = None
     count: int = 0
+    error: str | None = None
 
 
 def read_arp(display_name: str = constants.ARP_DISPLAY_NAME) -> ArpState:
@@ -164,6 +169,13 @@ def read_arp(display_name: str = constants.ARP_DISPLAY_NAME) -> ArpState:
     `count` is reported so a duplicate left behind by a failed uninstall is
     visible rather than silently taking the first match.
     """
+    try:
+        return _read_arp(display_name)
+    except Exception as exc:
+        return ArpState(present=False, error=f"{type(exc).__name__}: {exc}")
+
+
+def _read_arp(display_name: str) -> ArpState:
     import winreg
 
     matches: list[ArpState] = []
@@ -207,7 +219,7 @@ def read_arp(display_name: str = constants.ARP_DISPLAY_NAME) -> ArpState:
 #
 # Existence only. Resolving a .lnk target needs COM through PowerShell, and no
 # case in this starter is about shortcut targets -- INS-016 is, and when someone
-# implements it the working code is in cubrid-wsl-installer-test-old.
+# implements it, the working code is in the previous framework.
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class ShortcutState:
@@ -217,20 +229,25 @@ class ShortcutState:
     tray_link: Path | None
     distro_link_exists: bool
     tray_link_exists: bool
+    error: str | None = None
 
 
 def read_shortcuts(registry: RegistryState) -> ShortcutState:
     """Derive both paths from the registry -- never from a hard-coded name, so a
     custom-name install still resolves."""
-    desktop = registry.desktop_folder
-    wsl_name = registry.wsl_name
-    tray_name = registry.values.get("TrayAppLinkFile") or "cubrid_tray_app.lnk"
-    distro_link = (desktop / f"{wsl_name}.lnk") if (desktop and wsl_name) else None
-    tray_link = (desktop / str(tray_name)) if desktop else None
-    return ShortcutState(
-        distro_link=distro_link, tray_link=tray_link,
-        distro_link_exists=bool(distro_link and distro_link.is_file()),
-        tray_link_exists=bool(tray_link and tray_link.is_file()))
+    try:
+        desktop = registry.desktop_folder
+        wsl_name = registry.wsl_name
+        tray_name = registry.values.get("TrayAppLinkFile") or "cubrid_tray_app.lnk"
+        distro_link = (desktop / f"{wsl_name}.lnk") if (desktop and wsl_name) else None
+        tray_link = (desktop / str(tray_name)) if desktop else None
+        return ShortcutState(
+            distro_link=distro_link, tray_link=tray_link,
+            distro_link_exists=bool(distro_link and distro_link.is_file()),
+            tray_link_exists=bool(tray_link and tray_link.is_file()))
+    except Exception as exc:
+        return ShortcutState(None, None, False, False,
+                             error=f"{type(exc).__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -250,7 +267,8 @@ class CubridState:
     errors: dict[str, str] = field(default_factory=dict)
 
 
-def read_cubrid(settings: dict[str, Any], name: str | None) -> CubridState:
+def read_cubrid(settings: dict[str, Any], name: str | None, *,
+                include_guest: bool = True) -> CubridState:
     """Read CUBRID inside the named distribution.
 
     `name` comes from the registry -- what was ACTUALLY installed. There is
@@ -259,6 +277,14 @@ def read_cubrid(settings: dict[str, Any], name: str | None) -> CubridState:
 
     Records a per-command error instead of raising, so one unresponsive command
     does not hide everything else that was readable.
+
+    `include_guest=False` reads only what `wsl -l -v` reports -- whether the
+    distribution exists, its state and its version -- and skips the three
+    commands run INSIDE it. That matters while a distribution is being
+    unregistered: each in-guest command can hang to its own timeout against a
+    distro that is going away, so a poll loop asking "is it gone yet" would take
+    up to three minutes per iteration to answer a question `wsl -l -v` answers
+    in one call.
     """
     cfg = settings.get("distro", {})
     user = cfg.get("user") or None
@@ -274,6 +300,14 @@ def read_cubrid(settings: dict[str, Any], name: str | None) -> CubridState:
     if entry is None:
         return CubridState(False, False, None, None, None, None)
 
+    present = CubridState(distro_present=True,
+                          distro_running=entry.state.casefold() == "running",
+                          distro_version=entry.version,
+                          service_running=None, cubrid_version=None,
+                          demodb_present=None)
+    if not include_guest:
+        return present
+
     def _run(label: str, command: str) -> str | None:
         try:
             result = distro_mod.run(entry.name, command, user=user,
@@ -288,18 +322,27 @@ def read_cubrid(settings: dict[str, Any], name: str | None) -> CubridState:
     status = _run("service_status", "cubrid service status")
     service_running: bool | None = None
     if status is not None:
-        if constants.SERVICE_RUNNING_MARKER in status:
-            service_running = True
-        elif constants.SERVICE_STOPPED_MARKER in status:
+        # Case-insensitively: the product's own capitalisation of "CUBRID" in
+        # this message is not something to depend on.
+        lowered = status.lower()
+        # The stopped marker is checked first: if the output ever carries both
+        # lines, "not running" is the answer that must win.
+        if constants.SERVICE_STOPPED_MARKER in lowered:
             service_running = False
+        elif constants.SERVICE_RUNNING_MARKER in lowered:
+            service_running = True
 
     version = _run("cubrid_rel", "cubrid_rel")
 
     databases: tuple[str, ...] = ()
     demodb_present: bool | None = None
+    # `|| true` so that "there is no databases.txt" is an ANSWER (no databases)
+    # rather than a recorded command error. Without it, a scenario with
+    # CREATE_DEMODB=0 records a spurious error that OPS-001 would then fail on.
     listing = _run("databases",
                    'cat "$CUBRID_DATABASES/databases.txt" 2>/dev/null '
-                   '|| cat "$CUBRID/databases/databases.txt" 2>/dev/null')
+                   '|| cat "$CUBRID/databases/databases.txt" 2>/dev/null '
+                   '|| true')
     if listing is not None:
         databases = tuple(line.split()[0] for line in listing.splitlines()
                           if line.strip() and not line.strip().startswith("#"))
@@ -327,49 +370,60 @@ class MachineState:
     shortcuts: ShortcutState
     cubrid: CubridState
 
-    @property
-    def installed(self) -> bool:
-        return self.registry.present and self.registry.installed
-
     def as_dict(self) -> dict[str, Any]:
         return {
             "registry": {"present": self.registry.present,
                          "values": self.registry.values,
                          "error": self.registry.error},
             "startup": {"tray_app": self.startup.tray_app,
-                        "starter": self.startup.starter},
+                        "starter": self.startup.starter,
+                        "error": self.startup.error},
             "arp": self.arp.__dict__,
             "shortcuts": {"distro_link": str(self.shortcuts.distro_link),
                           "distro_link_exists": self.shortcuts.distro_link_exists,
                           "tray_link": str(self.shortcuts.tray_link),
-                          "tray_link_exists": self.shortcuts.tray_link_exists},
+                          "tray_link_exists": self.shortcuts.tray_link_exists,
+                          "error": self.shortcuts.error},
             "cubrid": {**self.cubrid.__dict__,
                        "databases": list(self.cubrid.databases)},
         }
 
 
-def snapshot(settings: dict[str, Any]) -> MachineState:
-    """One reading of the whole machine. Never raises."""
+def snapshot(settings: dict[str, Any], *,
+             include_guest: bool = True) -> MachineState:
+    """One reading of the whole machine. Never raises.
+
+    That is a promise `wait_until` depends on: it calls this in a loop for up to
+    fifteen minutes while an install or an uninstall is changing the very keys
+    being read, and one transient failure must not end the wait. Every reader
+    below records its own error and returns a partial answer instead.
+    """
     registry = read_registry()
     return MachineState(registry=registry,
                         startup=read_startup(),
                         arp=read_arp(),
                         shortcuts=read_shortcuts(registry),
-                        cubrid=read_cubrid(settings, registry.wsl_name))
+                        cubrid=read_cubrid(settings, registry.wsl_name,
+                                           include_guest=include_guest))
 
 
 def wait_until(predicate: Callable[[MachineState], bool],
                settings: dict[str, Any], *, timeout: float = 120,
                interval: float = 3.0,
-               description: str = "condition") -> MachineState:
+               description: str = "condition",
+               include_guest: bool = True) -> MachineState:
     """Poll until a predicate holds, then return the snapshot that satisfied it.
 
     Needed because the installer dispatches demodb creation asynchronously and
     can exit before the database exists. Tests express the condition; they never
     sleep.
+
+    Pass `include_guest=False` when the predicate does not read anything from
+    inside the distribution -- see `read_cubrid`, which explains why that is
+    worth caring about during an uninstall.
     """
     deadline = time.time() + timeout
-    latest = snapshot(settings)
+    latest = snapshot(settings, include_guest=include_guest)
     while True:
         if predicate(latest):
             return latest
@@ -377,4 +431,4 @@ def wait_until(predicate: Callable[[MachineState], bool],
             raise TimeoutError(f"{description} was not satisfied within "
                                f"{timeout:.0f}s. Last state: {latest.as_dict()}")
         time.sleep(interval)
-        latest = snapshot(settings)
+        latest = snapshot(settings, include_guest=include_guest)

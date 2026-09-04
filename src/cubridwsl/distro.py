@@ -13,9 +13,9 @@ Two safety rules are enforced here rather than left to callers:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
-from typing import Iterable
 
 WSL = "wsl.exe"
 
@@ -52,9 +52,20 @@ class CommandResult:
         return self.returncode == 0
 
 
+def _environment() -> dict[str, str]:
+    """WSL_UTF8=1 makes wsl.exe emit its OWN messages as UTF-8 instead of
+    UTF-16LE, which is how a "no such distribution" error stops arriving as
+    mojibake. Older builds ignore the variable, so `_decode` still detects the
+    encoding rather than trusting this."""
+    env = dict(os.environ)
+    env["WSL_UTF8"] = "1"
+    return env
+
+
 def _decode(raw: bytes) -> str:
-    """wsl.exe emits UTF-16LE for its OWN output (-l -v, --status) but passes
-    guest output through as bytes. Detect rather than assume."""
+    """wsl.exe emits UTF-16LE for its OWN output (-l -v, --status) unless
+    WSL_UTF8 is set, and passes guest output through as bytes either way.
+    Detect rather than assume."""
     if not raw:
         return ""
     if b"\x00" in raw[:200]:
@@ -73,7 +84,8 @@ def _wsl(args: list[str], timeout: int) -> CommandResult:
         raise ProtectedDistroError(
             "wsl --shutdown is machine-global and is never permitted by this "
             "framework; it would terminate every distribution on the host.")
-    completed = subprocess.run([WSL, *args], capture_output=True, timeout=timeout)
+    completed = subprocess.run([WSL, *args], capture_output=True, timeout=timeout,
+                               env=_environment())
     return CommandResult(returncode=completed.returncode,
                          stdout=_decode(completed.stdout).strip(),
                          stderr=_decode(completed.stderr).strip(),
@@ -128,14 +140,6 @@ def find(name: str, timeout: int = 30) -> Distro | None:
         if distro.name.casefold() == name.casefold():
             return distro
     return None
-
-
-def assert_not_protected(name: str, protected: Iterable[str]) -> None:
-    """Guard for any mutating operation. Call before unregister/terminate."""
-    if name.casefold() in {p.casefold() for p in protected}:
-        raise ProtectedDistroError(
-            f"{name!r} is listed in safety.protected_distros and must not be "
-            "modified by the test framework.")
 
 
 def run(name: str, command: str, *, user: str | None = None,

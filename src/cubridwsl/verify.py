@@ -57,6 +57,11 @@ CHECKS: tuple[Check, ...] = (
           _install_dir_for,
           lambda s: normalize_path(str(s.registry.install_dir))
                     if s.registry.install_dir else None),
+    # The registry can name a directory that is not on disk -- a partially
+    # rolled-back install looks exactly like a good one from the registry alone.
+    # The dev team's prototype cross-checks the same two facts.
+    Check("install_dir.exists", "identity", lambda o: True,
+          lambda s: bool(s.registry.install_dir and s.registry.install_dir.is_dir())),
 
     # --- the distribution ---------------------------------------------------
     Check("distro.present", "distro", lambda o: True,
@@ -146,9 +151,6 @@ class Comparison:
             wanted = self.results
         failures = [r for r in wanted if not r.matches]
         return "\n".join(str(r) for r in failures)
-
-    def report(self) -> str:
-        return "\n".join(str(r) for r in self.results)
 
     def as_list(self) -> list[dict[str, Any]]:
         return [r.__dict__ for r in self.results]

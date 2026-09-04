@@ -110,6 +110,16 @@ Settings > Apps > Advanced app settings > App execution aliases.
     New-Item -ItemType Directory -Force -Path "reports/$stamp" | Out-Null
     Write-Host "python $($pytestArgs -join ' ')" -ForegroundColor DarkGray
     & $python @($prefix + $pytestArgs)
-    exit $LASTEXITCODE
+    $code = $LASTEXITCODE
+
+    # pytest exits 5 when nothing was collected. After a -Case filter that means
+    # the ID does not exist, which otherwise reads as "the test is missing".
+    if ($code -eq 5 -and $Case) {
+        Write-Host ""
+        Write-Host "No test carries case ID '$Case'." -ForegroundColor Yellow
+        Write-Host ("Case IDs are part of the test names. List what exists with:" +
+                    "`n    .\run-tests.ps1 -CollectOnly") -ForegroundColor Yellow
+    }
+    exit $code
 }
 finally { Pop-Location }

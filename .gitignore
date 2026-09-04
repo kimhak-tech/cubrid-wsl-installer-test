@@ -5,6 +5,10 @@ __pycache__/
 .venv/
 venv/
 
+# editor / IDE state
+.vscode/
+.idea/
+
 # per-machine overrides -- never committed
 config/settings.local.toml
 

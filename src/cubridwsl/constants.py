@@ -61,7 +61,6 @@ INSTALL_OPTIONS = {
 # --------------------------------------------------------------------------- #
 CUBRID_HOME = "/home/cubrid/CUBRID"
 CUBRID_DATABASES = "/home/cubrid/CUBRID/databases"
-ENV_SCRIPT = "~/.cubrid.sh"
 
 # The text the Tray itself matches to decide the service is up or down
 # (src/cubrid_tray_app.cpp). Read the same output, agree with the product.
@@ -111,6 +110,40 @@ WIZARD_STRINGS = {
         "btn_finish": "완료",
     },
 }
+
+# Dialogs the wizard can stop on, from ActionEnvironmentCheck's own message
+# tables. Every one of them is MODAL: the driver cannot advance past it, and a
+# driver that only waits for the next page hangs on it until its timeout and
+# then blames the missing page.
+#
+# All are fatal except `reboot_required`, which is advisory -- the dev team's
+# prototype clicks OK on that one and carries on, and so does the driver.
+WIZARD_WARNINGS = {
+    "virtualization_disabled": ("Virtualization Technology Disabled",
+                                "가상화 기술 비활성화"),
+    "windows_version":         ("Windows Version Not Met", "Windows 버전 문제"),
+    "administrator_rights":    ("Administrator Rights Not Met", "관리자 권한 문제"),
+    "wsl_not_installed":       ("WSL Installation Not Met", "WSL 설치 미설치"),
+    "reboot_required":         ("Reboot Required For WSL",
+                                "WSL 위한 재부팅이 필요할 수 있습니다."),
+}
+ADVISORY_WARNING = "reboot_required"
+
+# WiX's CustomFatalErrorDlg and Burn's own failure page. Detecting these is what
+# turns a 15-minute timeout into a five-second failure carrying the real reason.
+WIZARD_FAILURE_TITLES = ("Installation Failed", "설치 실패",
+                         "Uninstall Failed", "제거 실패")
+
+# The MSI dialogs' window class. The wizard's completion page shares its title
+# with other windows on screen, so the class is what distinguishes it.
+MSI_DIALOG_CLASS_PREFIX = "MsiDialog"
+
+# The Tray executable, as installed. Named here because reset stops it before
+# uninstalling -- see reset.stop_tray().
+TRAY_EXE = "cubrid_tray_app.exe"
+
+# Buttons on the environment-check warning dialogs.
+OK_BUTTONS = ("OK", "확인")
 
 
 def ui_strings(name: str) -> list[str]:

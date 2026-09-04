@@ -15,6 +15,7 @@ There are two kinds of fixture here:
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +30,12 @@ from cubridwsl.drivers import silent, wizard
 # test fails, which is exactly when the numbers matter least.
 _NOTES: list[str] = []
 
+# Facts the run's results depend on, written to reports/<run>/run.json. A result
+# is only quotable if you can say which binary produced it, under which account,
+# in which mode -- and a line printed to a terminal nobody kept is not that.
+_RUN_FACTS: dict[str, Any] = {}
+_INSTALLS: list[dict[str, Any]] = []
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--installer", default=None,
@@ -37,6 +44,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
                      help="Bundle UI mode. Not cosmetic: /passive gives the MSI "
                           "UILevel 4 and runs the environment checks; /quiet "
                           "gives UILevel 2 and skips them.")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Run the read-only self-checks before anything that installs.
+
+    `run-tests.ps1 all` otherwise takes the files in alphabetical order and
+    installs the product before the checks that prove the setup is sound have
+    run at all -- five minutes spent to reach a failure the first second could
+    have reported. The sort is stable, so nothing else moves.
+    """
+    items.sort(key=lambda item: 0 if item.get_closest_marker("environment") else 1)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
@@ -90,9 +108,10 @@ def run_dir(request) -> Path:
     installer logs and the state snapshots land together.
     """
     xmlpath = getattr(request.config.option, "xmlpath", None)
-    import time
+    # Anchored to the repository, not to the current directory: `pytest` run
+    # from anywhere else would otherwise scatter reports wherever it was called.
     directory = (Path(xmlpath).parent if xmlpath
-                 else Path("reports") / time.strftime("%Y%m%d-%H%M%S"))
+                 else config_mod.REPO_ROOT / "reports" / time.strftime("%Y%m%d-%H%M%S"))
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -103,6 +122,36 @@ def note() -> Callable[[str], None]:
     return _note
 
 
+@pytest.fixture(scope="session", autouse=True)
+def run_report(run_dir, request) -> dict[str, Any]:
+    """Record what this run ran against, before and after it runs.
+
+    Written twice on purpose: once at the start, so a session that dies part-way
+    still leaves the facts behind, and once at the end with what the installs
+    actually did.
+    """
+    path = run_dir / "run.json"
+    _RUN_FACTS.clear()
+    _INSTALLS.clear()
+    _RUN_FACTS.update({
+        "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "install_mode": request.config.getoption("--install-mode"),
+        **preflight.describe(),
+    })
+    _write_json(path, _RUN_FACTS)
+
+    yield _RUN_FACTS
+
+    _RUN_FACTS["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _RUN_FACTS["installs"] = _INSTALLS
+    _write_json(path, _RUN_FACTS)
+
+
+def _write_json(path: Path, payload: Any) -> Path:
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return path
+
+
 @pytest.fixture(scope="session")
 def dump_json(run_dir) -> Callable[[str, Any], Path]:
     """Write a named JSON artefact into this run's report directory.
@@ -111,9 +160,7 @@ def dump_json(run_dir) -> Callable[[str, Any], Path]:
     means reinstalling the product.
     """
     def _dump(name: str, payload: Any) -> Path:
-        path = run_dir / f"{name}.json"
-        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-        return path
+        return _write_json(run_dir / f"{name}.json", payload)
     return _dump
 
 
@@ -127,12 +174,10 @@ class Installation:
     driver: str
     options: dict[str, Any]
     state: state_mod.MachineState
-    result: Any = None
+    # Either driver's result: both carry ok / timed_out / duration_seconds /
+    # describe() / as_dict(), which is what lets the fixture treat them alike.
+    result: silent.RunResult | wizard.WizardResult | None = None
     _comparison: verify.Comparison | None = field(default=None, repr=False)
-
-    @property
-    def wsl_name(self) -> str:
-        return str(self.options["CUB_DEFAULT_WSL_NAME"])
 
     @property
     def comparison(self) -> verify.Comparison:
@@ -164,6 +209,12 @@ def _provision(driver_name: str, install_fn, settings, installer, run_dir,
 
     _note(f"== provisioning a default install via the {driver_name} driver ==")
     _note(f"  installer  : {installer.describe()}")
+    _RUN_FACTS["installer"] = {
+        "path": str(installer.path), "sha256": installer.sha256,
+        "cubrid_version": installer.cubrid_version,
+        "installer_version": installer.installer_version,
+        "build": installer.build,
+    }
     _note(f"  account    : {preflight.current_account()} "
           f"(elevated={preflight.is_elevated()}) -- this decides which HKCU "
           f"hive the assertions read")
@@ -173,6 +224,10 @@ def _provision(driver_name: str, install_fn, settings, installer, run_dir,
 
     result = install_fn(options, run_dir / f"install-{driver_name}.log")
     _note(f"  install    : {result.describe()}")
+    # Recorded before the assertions below, so a FAILED install is in the report
+    # too -- with its exit code and the log paths it wrote.
+    _INSTALLS.append({"driver": driver_name, "options": options,
+                      **result.as_dict()})
     assert not result.timed_out, (
         f"the {driver_name} install timed out after {result.duration_seconds:.0f}s. "
         "The product's own WSL import step runs with no timeout of its own, so "
@@ -186,7 +241,11 @@ def _provision(driver_name: str, install_fn, settings, installer, run_dir,
         lambda s: (s.registry.present and s.cubrid.distro_present
                    and (s.cubrid.demodb_present or not want_demodb)),
         settings, timeout=settings["timeouts"]["settle_seconds"],
-        description=f"the {driver_name} install to settle")
+        description=(f"the {driver_name} install to settle (registry key, the "
+                     f"distribution"
+                     + (", and demodb -- which the installer creates "
+                        "asynchronously and can fail to create without failing "
+                        "the install" if want_demodb else "") + ")"))
 
     (run_dir / f"state-{driver_name}.json").write_text(
         json.dumps(machine.as_dict(), indent=2, default=str), encoding="utf-8")

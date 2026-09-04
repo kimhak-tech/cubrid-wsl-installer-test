@@ -1,9 +1,9 @@
 """Framework self-check. Read-only, needs no installed product, takes seconds.
 
-Not a test case from the xlsx -- it is the thing you run BEFORE trusting any
-result. It proves the framework can read its configuration, resolve the bundle
-you named, reach WSL and decode its output. If any of this fails, nothing after
-it means anything.
+Not a test case from the scenario matrix -- it is what you run BEFORE trusting
+any result. It proves the framework can read its configuration, resolve the
+bundle you named, reach WSL and decode its output. If any of this fails, nothing
+after it means anything.
 
     .\\run-tests.ps1 environment
 """
@@ -43,6 +43,41 @@ def test_the_configured_installer_resolves(installer, note):
     """
     assert installer.path.is_file()
     note(f"  installer  : {installer.describe()}")
+
+
+def test_the_installer_path_is_not_in_the_committed_config(note):
+    """Your bundle path belongs in settings.local.toml, which is gitignored.
+
+    Put it in the tracked settings.toml instead and it works on your machine
+    while handing every teammate a path that does not exist -- and the
+    repository grows a reference to your D: drive.
+    """
+    committed = config_mod.committed_installer_path()
+    assert not committed, (
+        f"config/settings.toml (which IS committed) sets installer.path to "
+        f"{committed!r}.\nMove it into config/settings.local.toml, which is "
+        "gitignored and merged over it:\n\n"
+        "  [installer]\n"
+        f'  path = "{committed}"\n\n'
+        "and set the tracked file back to an empty path.")
+    note("  installer  : path comes from settings.local.toml, as it should")
+
+
+def test_the_installer_is_not_blocked_by_mark_of_the_web(installer, note):
+    """A downloaded bundle is flagged, and an unattended run cannot click past
+    the SmartScreen dialog that flag produces.
+
+    Checked here rather than fixed silently: unblocking edits a file you pointed
+    us at, and that is your call, not the framework's.
+    """
+    motw = installer.mark_of_the_web
+    assert motw is None, (
+        f"{installer.path.name} carries a Mark-of-the-Web (it was downloaded or "
+        f"copied from a network share):\n{motw}\n\n"
+        "SmartScreen can block an unsigned bundle so flagged, and an unattended "
+        "install has nothing to click the dialog with -- it would hang until the "
+        "install timeout. Clear it with:\n"
+        f"    Unblock-File -Path '{installer.path}'")
 
 
 def test_wsl_responds_and_its_output_decodes(note):
