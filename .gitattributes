@@ -1,0 +1,9 @@
+# Line endings are load-bearing in this workspace, so they are pinned rather
+# than left to each developer's core.autocrlf. A CRLF .sh baked into the WSL
+# image corrupts every variable it exports -- that is a real defect this project
+# has already had to diagnose once.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf

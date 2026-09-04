@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# per-machine overrides -- never committed
+config/settings.local.toml
+
+# run output
+reports/

@@ -1,0 +1,40 @@
+# Committed defaults. Per-machine values go in config/settings.local.toml,
+# which is gitignored and deep-merged over this file.
+
+[installer]
+# THE BUNDLE TO TEST. Name the exact .exe on this machine. There is no search:
+# the build number in the filename is a commit count, so "the newest file in a
+# directory" is not a stable answer to "which binary produced this result".
+#   path = "D:/CUBRID/CUBRID-WSL/builds/CUBRID-11.4-For-WSL-1.0.0-0003-win64.exe"
+path = ""
+
+[distro]
+# The account the product itself uses for every call into the distribution.
+user = "cubrid"
+# Prefixed to in-distro commands that mirror how the product invokes WSL:
+#   wsl -d <name> -u cubrid --exec bash -c ". ~/.cubrid.sh; <command>"
+# OPS-002 deliberately does NOT use this -- see that test.
+env_setup = ". ~/.cubrid.sh 2>/dev/null; "
+
+# No distro name here on purpose. What a machine actually has installed is read
+# from the product's own registry key; what an install is asked to CREATE is
+# INSTALL_OPTIONS["CUB_DEFAULT_WSL_NAME"] in src/cubridwsl/constants.py.
+
+[safety]
+# The framework must never unregister, terminate or otherwise modify these.
+# Docker Desktop is a WSL2 co-tenant on most developer machines.
+protected_distros = ["Ubuntu", "docker-desktop"]
+
+[timeouts]
+# Measured on the reference machine: one silent install takes ~80 seconds.
+# 900 leaves generous headroom. Do not raise it much further -- a hang inside a
+# session fixture fails every test in the group, so failing sooner is better.
+install_seconds = 900
+uninstall_seconds = 600
+wsl_command_seconds = 60
+# demodb creation is dispatched asynchronously and can finish after the
+# installer has already exited, so the install fixture polls for it.
+settle_seconds = 300
+
+[paths]
+reports = "reports"
