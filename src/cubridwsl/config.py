@@ -155,7 +155,7 @@ def resolve_installer(settings: dict[str, Any],
             f"filename pattern:\n  {path.name}\n"
             "Expected CUBRID-<cubrid version>-For-WSL-<installer version>-"
             "<build>-win64.exe.\n"
-            "The version fields are read OUT of the name -- OPS-001 checks the "
+            "The version fields are read OUT of the name -- INS-001 checks the "
             "CUBRID reported inside the distribution against them -- so a "
             "renamed file is refused rather than silently tested.")
 

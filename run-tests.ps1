@@ -4,11 +4,11 @@
     stable means the runner underneath can change without retraining anyone.
 
         .\run-tests.ps1 environment   # read-only self-check (default)
-        .\run-tests.ps1 silent        # INS-002, OPS-001, OPS-002   DESTRUCTIVE
-        .\run-tests.ps1 ui            # INS-001                     DESTRUCTIVE
-        .\run-tests.ps1 all           # everything
+        .\run-tests.ps1 silent        # INS-002, 1 install           DESTRUCTIVE
+        .\run-tests.ps1 ui            # INS-001 + INS-004, 2 installs DESTRUCTIVE
+        .\run-tests.ps1 all           # everything, 3 installs        DESTRUCTIVE
 
-    One case by its ID:   .\run-tests.ps1 -Case INS-002
+    One case by its ID:   .\run-tests.ps1 -Case INS-001
 #>
 [CmdletBinding()]
 param(
@@ -16,19 +16,13 @@ param(
     [ValidateSet('environment', 'silent', 'ui', 'all')]
     [string]$Suite = 'environment',
 
-    # A manual test-case ID, e.g. -Case INS-002. Case IDs are part of the test
+    # A manual test-case ID, e.g. -Case INS-001. Case IDs are part of the test
     # function names, so this becomes a plain pytest -k filter. It overrides
     # -Suite. The hyphen is translated to an underscore because pytest's -k
     # expression grammar does not accept one.
     [string]$Case,
 
     [string]$Installer,
-
-    # /passive gives the MSI UILevel 4 and RUNS the environment checks (their
-    # dialogs are merely suppressed); /quiet gives UILevel 2 and skips them.
-    # Not cosmetic.
-    [ValidateSet('passive', 'quiet')]
-    [string]$Mode = 'passive',
 
     # List what WOULD run, and stop. The only risk-free way to check a filter
     # against a suite that installs and uninstalls the product.
@@ -96,7 +90,6 @@ Settings > Apps > Advanced app settings > App execution aliases.
         }
     }
     if ($Installer)   { $pytestArgs += @('--installer', $Installer) }
-    $pytestArgs += @('--install-mode', $Mode)
     if ($CollectOnly) { $pytestArgs += @('--collect-only', '-q') }
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'

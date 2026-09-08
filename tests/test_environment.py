@@ -9,10 +9,12 @@ after it means anything.
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from cubridwsl import config as config_mod
-from cubridwsl import distro, preflight, state as state_mod
+from cubridwsl import constants, distro, preflight, state as state_mod, verify
 
 pytestmark = pytest.mark.environment
 
@@ -103,3 +105,316 @@ def test_the_registry_is_readable_and_reports_the_product_state(settings, note):
     note(f"  product    : {'INSTALLED' if registry.present else 'not installed'} "
          f"for this account"
          + (f", WslName={registry.wsl_name}" if registry.present else ""))
+
+
+def test_the_service_status_parser_agrees_with_a_recorded_real_run(note):
+    """`parse_service_status` pinned against output this product really printed.
+
+    Both samples are VERBATIM from build 11.4-1.0.0-0003. Neither was written
+    from CUBRID's documentation, and that matters: the first version of this
+    parser WAS, and it got two things wrong -- it read the empty server section
+    as "could not tell" rather than "no database started", and it accepted a
+    broker table header as proof the brokers were running.
+
+    INS-001 asserts the components individually, so a parser regression fails
+    that case against a correct product. Pinning it here catches that in the
+    read-only suite, in a second, instead of after a five-minute install.
+
+    When a future build prints something this cannot classify, add THAT build's
+    output here rather than relaxing the rules.
+    """
+    # reports/20260908-111333 -- a healthy install, everything the product
+    # actually starts.
+    healthy = (
+        "@ cubrid master status\n"
+        "++ cubrid master is running.\n"
+        "@ cubrid server status\n"
+        "@ cubrid pl status\n"
+        "@ cubrid broker status\n"
+        "  NAME                   PID  PORT    AS   JQ\n"
+        "=================================================\n"
+        "* query_editor            97 30000     5    0\n"
+        "* broker1                116 33000     5    0\n"
+        "@ cubrid gateway status\n"
+        "++ cubrid gateway is not running.\n"
+        "@ cubrid manager server status\n"
+        "++ cubrid manager server is running.")
+    verdicts = state_mod.parse_service_status(healthy)
+    brokers = state_mod.parse_running_brokers(healthy)
+    note(f"  parser     : healthy run -> {verdicts}, brokers={list(brokers)}")
+
+    assert verdicts == {"master": True, "server": False,
+                        "broker": True, "manager": True}, (
+        f"the recorded output of a healthy install was read as {verdicts}. "
+        "`pl` and `gateway` must be ignored (neither is named by INS-001), and "
+        "an EMPTY server section is False -- no database started -- not None.")
+    assert brokers == ("query_editor", "broker1"), (
+        f"the broker table lists two brokers by name; got {brokers}. Rows are "
+        "found by SHAPE (a name followed by a numeric PID), so adding or "
+        "reordering a column must not stop finding them.")
+
+    # reports/20260908-094612 -- the same install sampled too early, before
+    # `cubrid service start` had finished. This is what the settle wait exists
+    # to stop being reported as a failure.
+    starting = (
+        "@ cubrid master status\n"
+        "++ cubrid master is running.\n"
+        "@ cubrid server status\n"
+        "@ cubrid pl status\n"
+        "@ cubrid broker status\n"
+        "++ cubrid broker is not running.\n"
+        "@ cubrid gateway status\n"
+        "++ cubrid gateway is not running.\n"
+        "@ cubrid manager server status\n"
+        "++ cubrid manager server is not running.")
+    assert state_mod.parse_service_status(starting) == {
+        "master": True, "server": False, "broker": False, "manager": False}
+    assert state_mod.parse_running_brokers(starting) == ()
+
+    # A broker service that is up but running NOTHING serves nothing, so an
+    # empty table is not "running" -- the header alone must not satisfy it.
+    header_only = ("@ cubrid broker status\n"
+                   "  NAME                   PID  PORT\n"
+                   "=====================================")
+    assert state_mod.parse_service_status(header_only) == {"broker": False}, (
+        "a broker table with no rows must read as NOT running")
+
+    assert state_mod.parse_service_status(
+        "@ cubrid manager server status\n unrecognised output\n"
+    ) == {"manager": None}, (
+        "unclassifiable output must be None -- never False, which would report "
+        "a component as DOWN on the strength of the framework failing to "
+        "understand the output.")
+
+
+def test_the_shortcut_parser_reads_a_link_the_way_windows_writes_one(tmp_path, note):
+    """`read_shortcut` parses the .lnk binary format, in both string encodings.
+
+    Shortcuts are parsed in pure Python rather than through WScript.Shell,
+    because the shortcut assertions run on the SILENT track too -- INS-002
+    applies INS-001's whole post-install set -- and a COM reader would give that
+    track a pywinauto dependency the workbook defines it as not having.
+    That choice is only safe if the parser is right, so it is pinned here --
+    off Windows, in milliseconds, against a link built byte by byte.
+
+    Both encodings matter: the product writes shortcuts through IShellLinkA, so
+    an ANSI link is what this build produces, but Windows is free to store
+    Unicode strings and sets the IsUnicode flag when it does.
+    """
+    for unicode_strings in (True, False):
+        path = tmp_path / f"sample-{unicode_strings}.lnk"
+        path.write_bytes(_build_lnk(
+            target=r"C:\Windows\System32\wsl.exe",
+            arguments="-d CUBRID-FOR-WSL -u cubrid --cd ~",
+            icon=r"C:\Windows\System32\wsl.exe,0",
+            unicode_strings=unicode_strings))
+
+        shortcut = state_mod.read_shortcut(path)
+        note(f"  shortcut   : unicode={unicode_strings} -> {shortcut.describe()}")
+        assert shortcut.error is None, shortcut.error
+        assert shortcut.target == r"C:\Windows\System32\wsl.exe"
+        assert shortcut.arguments == "-d CUBRID-FOR-WSL -u cubrid --cd ~"
+        assert shortcut.icon_location == r"C:\Windows\System32\wsl.exe,0"
+        # The trailing ",0" is an icon INDEX, not part of the path. Splitting on
+        # the last comma is safe: a Windows path cannot contain one.
+        assert shortcut.icon_path == r"C:\Windows\System32\wsl.exe"
+        assert shortcut.icon_matches_target, (
+            "the product sets the icon to the target executable itself, so "
+            "these must compare equal after path normalisation")
+
+    missing = state_mod.read_shortcut(tmp_path / "absent.lnk")
+    assert missing.exists is False and missing.error is None, (
+        "an absent shortcut is an ANSWER, not an error")
+
+    (tmp_path / "junk.lnk").write_bytes(b"not a shell link at all")
+    junk = state_mod.read_shortcut(tmp_path / "junk.lnk")
+    assert junk.exists and junk.error and junk.target is None, (
+        "an unparseable .lnk must report an error and no target -- never a "
+        "guessed one")
+
+
+def _build_lnk(target: str, arguments: str, icon: str,
+               unicode_strings: bool) -> bytes:
+    """One [MS-SHLLINK] shell link, assembled by hand.
+
+    Only the parts `read_shortcut` reads: the header, a LinkInfo block carrying
+    LocalBasePath, and the ARGUMENTS and ICON_LOCATION StringData sections.
+    """
+    import struct
+
+    has_link_info, has_args, has_icon, is_unicode = 0x2, 0x20, 0x40, 0x80
+    flags = has_link_info | has_args | has_icon | (is_unicode if unicode_strings else 0)
+    header = (struct.pack("<I", 0x4C) + b"\x01\x14\x02\x00" + b"\x00" * 12
+              + struct.pack("<I", flags) + struct.pack("<I", 0) + b"\x00" * 24
+              + struct.pack("<IiiI", 0, 0, 1, 0) + b"\x00" * 10)[:76].ljust(76, b"\x00")
+
+    base = target.encode("cp1252") + b"\x00"
+    fixed = 28                                   # LinkInfoHeaderSize 0x1C
+    link_info = struct.pack("<IIIIIII", fixed + len(base) + 1, 0x1C, 1, 0,
+                            fixed, 0, fixed + len(base)) + base + b"\x00"
+
+    def _string(text: str) -> bytes:
+        encoded = (text.encode("utf-16-le") if unicode_strings
+                   else text.encode("cp1252"))
+        return struct.pack("<H", len(text)) + encoded
+
+    return header + link_info + _string(arguments) + _string(icon)
+
+
+def test_one_broken_thing_produces_one_failure_line(note):
+    """A failed prerequisite SUPPRESSES the checks that depend on it.
+
+    Without this, one root cause fanned out into several failure lines that all
+    said the same thing: an unreadable `cubrid service status` produced four,
+    and a login shell that would not open produced five -- burying the single
+    line that carried the reason.
+
+    Suppression is not the same as passing, and the difference is the whole
+    reason this test exists: a suppressed check is reported as `[skip]` naming
+    its prerequisite, and it is in the JSON report. A fact that went unverified
+    must never be mistaken for one that was verified.
+    """
+    options = dict(constants.INSTALL_OPTIONS)
+
+    # Nothing installed at all: registry.present is the only real finding.
+    nothing = _bare_machine()
+    comparison = verify.compare(options, nothing)
+    identity = [r for r in comparison.results if r.area == "identity"]
+    failed = [r for r in identity if r.failed]
+    skipped = [r for r in identity if r.skipped]
+    note(f"  suppression: nothing installed -> {len(failed)} failure, "
+         f"{len(skipped)} skipped")
+
+    assert [r.name for r in failed] == ["registry.present"], (
+        f"one missing product key should be ONE finding, got "
+        f"{[r.name for r in failed]}")
+    assert {r.name for r in skipped} == {
+        "registry.Installed", "registry.wsl_name", "registry.install_dir",
+        "install_dir.exists"}, (
+        f"the dependent identity checks should all be skipped, got "
+        f"{[r.name for r in skipped]}")
+
+    # Skipped is NOT passed: it must still be visible as unverified.
+    for result in skipped:
+        assert not result.failed and result.skipped_because, result
+        assert "[skip]" in str(result), (
+            f"a skipped check must render as [skip], got {str(result)!r}")
+
+    # Every skipped check must name a prerequisite that is ITSELF a finding --
+    # failed, or skipped for the same reason further down. Asserted as an
+    # invariant rather than as a specific chain on purpose: which link is named
+    # depends on the machine (off Windows there is no %LOCALAPPDATA%, so
+    # registry.install_dir compares None to None, matches, and the chain
+    # collapses by one). The invariant holds either way; a hard-coded link
+    # would make this test pass or fail on where it happened to run.
+    by_name = {r.name: r for r in comparison.results}
+    for result in skipped:
+        blocker = by_name[result.skipped_because]
+        assert blocker.failed or blocker.skipped, (
+            f"{result.name} was skipped because of {result.skipped_because}, "
+            "which is neither failed nor skipped -- so nothing justified "
+            "suppressing it, and a real finding has gone unreported.")
+
+
+def _bare_machine() -> state_mod.MachineState:
+    """A machine with nothing installed, for the suppression check above."""
+    return state_mod.MachineState(
+        registry=state_mod.RegistryState(present=False),
+        startup=state_mod.StartupState(None, None),
+        arp=state_mod.ArpState(present=False),
+        shortcuts=state_mod.ShortcutState(
+            state_mod.Shortcut(None, False), state_mod.Shortcut(None, False)),
+        tray=state_mod.TrayState(None, None),
+        # Keyword arguments, deliberately: CubridState has ten fields and
+        # positional construction silently shifts every one of them when a
+        # field is added or removed.
+        cubrid=state_mod.CubridState(
+            distro_present=False, distro_running=False, distro_version=None,
+            cubrid_version=None, demodb_present=None))
+
+
+def test_a_shortcut_with_a_doubled_separator_is_reported_precisely(note):
+    """The tray shortcut defect found on build 11.4-1.0.0-0003, pinned.
+
+    `CubridCustomActions.cpp` builds the tray target as
+    `installDir + "\\" + trayAppFile`, and InstallDir is stored WITH a trailing
+    backslash -- so the path carries a doubled separator and Windows saves the
+    link with no LinkInfo LocalBasePath. The WSL shortcut is unaffected: it is
+    built from `wslPath`, which has no trailing separator.
+
+    Without the `_resolvable` check that produced two bare `False`s --
+    tray_target_exists and tray_icon_is_the_target -- with nothing saying why.
+    Now it is one failure carrying the malformed path and where it is built.
+    """
+    icon = ("C:\\Users\\USER\\AppData\\Local\\CUBRID-FOR-WSL\\"
+            "\\cubrid_tray_app.exe")
+    broken = state_mod.Shortcut(
+        pathlib.Path("C:\\Users\\USER\\Desktop\\cubrid_tray_app.lnk"),
+        exists=True, target=None, icon_location=icon,
+        unresolved_reason="the LinkInfo block carries no LocalBasePath")
+
+    assert broken.doubled_separator == icon, (
+        "the doubled separator must be found in the RAW string -- normalising "
+        "first would collapse it and hide the defect")
+    resolution = broken.resolution
+    assert isinstance(resolution, str), (
+        "a link that exists but names no target must resolve to a DESCRIPTION, "
+        f"not a bare bool, got {resolution!r}")
+    assert "DOUBLED separator" in resolution and "CubridCustomActions" in resolution
+    note(f"  shortcut   : broken tray link -> {resolution[:80]}...")
+
+    # A clean link is unaffected, and a drive letter's own colon-backslash must
+    # never be mistaken for a doubled separator.
+    good = state_mod.Shortcut(pathlib.Path("x.lnk"), exists=True,
+                              target="C:\\Windows\\System32\\wsl.exe",
+                              icon_location="C:\\Windows\\System32\\wsl.exe")
+    assert good.doubled_separator is None and good.resolution is True
+
+
+def test_the_state_diff_compares_everything_except_what_it_says_it_ignores(note):
+    """`state.diff` is the whole of INS-002's value, so it is pinned here.
+
+    INS-002 asserts the silent install produced the same machine as the wizard
+    install, and the workbook insists that be done by COMPARING SNAPSHOTS rather
+    than by re-listing INS-001's assertions. A diff that silently compared
+    nothing would pass forever and prove nothing -- which is the failure mode
+    worth catching in a second rather than after two install cycles.
+    """
+    left = _bare_machine()
+
+    assert state_mod.diff(left, left) == [], (
+        "a machine must not differ from itself")
+
+    # Every ignored path must be a path that EXISTS in the report. A typo here
+    # would ignore nothing and go unnoticed, because ignoring a field that is
+    # not there looks exactly like ignoring one that is.
+    report = left.as_dict()
+    for path in state_mod.DIFF_IGNORE:
+        node = report
+        for part in path.split("."):
+            assert isinstance(node, dict) and part in node, (
+                f"DIFF_IGNORE names {path!r}, which is not a field in the state "
+                f"report -- it ignores nothing. Stopped at {part!r}.")
+            node = node[part]
+    note(f"  diff       : ignoring {list(state_mod.DIFF_IGNORE)}, all present")
+
+    # A real difference is found, and named by its dotted path.
+    changed = state_mod.MachineState(
+        registry=state_mod.RegistryState(present=True, values={"WslName": "OTHER"}),
+        startup=left.startup, arp=left.arp, shortcuts=left.shortcuts,
+        tray=left.tray, cubrid=left.cubrid)
+    differences = state_mod.diff(left, changed)
+    assert any("registry.present" in d for d in differences), differences
+    assert any("registry.values.WslName" in d for d in differences), differences
+
+    # An ignored field differing does NOT register.
+    noisy = state_mod.MachineState(
+        registry=left.registry, startup=left.startup, arp=left.arp,
+        shortcuts=left.shortcuts, tray=left.tray,
+        cubrid=state_mod.CubridState(
+            distro_present=False, distro_running=False, distro_version=None,
+            cubrid_version=None, demodb_present=None,
+            service_status_raw="different pids every run"))
+    assert state_mod.diff(left, noisy) == [], (
+        "cubrid.service_status_raw carries process IDs and must be ignored; "
+        f"got {state_mod.diff(left, noisy)}")

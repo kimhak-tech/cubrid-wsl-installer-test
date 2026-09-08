@@ -16,6 +16,7 @@ removal step is declared to ignore its failures.
 """
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 import time
@@ -23,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .. import config as config_mod, preflight
+from .. import config as config_mod, constants, preflight
 
 # 0 = success, 3010 = success but a reboot is pending. Both are installs that
 # happened; anything else is not.
@@ -83,6 +84,32 @@ class RunResult:
                 "timed_out": self.timed_out, "log_path": str(self.log_path),
                 "logs": [str(p) for p in self.logs],
                 "stdout": self.stdout[:2000], "stderr": self.stderr[:2000]}
+
+
+def ui_level_from_log(log_path: Path) -> int | None:
+    """The UI level Burn RECORDED for this run, from its own log.
+
+    INS-002 has to show that no UI was displayed at any point. Inferring that
+    from the command line would only restate what we asked for; this reads what
+    the bundle says it did:
+
+        i410: Variable: WixBundleUILevel = 2
+
+    Returns None when the line is absent -- which is itself worth reporting,
+    since a bundle that never wrote it may have failed before it started.
+
+    The log is read as bytes and decoded leniently: Burn writes UTF-8 with a
+    BOM, and a decode error here must not lose the diagnosis.
+    """
+    try:
+        text = log_path.read_bytes().decode("utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    match = None
+    for match in re.finditer(
+            rf"{re.escape(constants.BURN_UI_LEVEL_VARIABLE)}\s*=\s*(\d+)", text):
+        pass                     # keep the LAST occurrence: the run's own value
+    return int(match.group(1)) if match else None
 
 
 def as_properties(options: dict[str, Any]) -> list[str]:
@@ -152,17 +179,29 @@ def uninstall(package: config_mod.InstallerPackage, log_path: Path, *,
 
 
 def uninstall_with_command(uninstall_string: str, log_path: Path, *,
-                           timeout: int) -> RunResult:
+                           timeout: int, mode: str = "quiet") -> RunResult:
     """Uninstall through the Apps & Features command, as Windows would run it.
 
     The string is passed in from observed machine state rather than
     reconstructed here, so this driver keeps no dependency on the verification
     layer.
+
+    `mode` defaults to QUIET, and that default is load-bearing rather than a
+    preference. This runs from `reset.ensure_clean`, immediately before the next
+    install. Under /passive Burn draws a progress window titled "CUBRID For WSL
+    Setup" and its parent process can return while that window is still closing
+    -- and the wizard driver refuses to start while any window with that title
+    is open, because it cannot tell a leftover apart from the one it is about to
+    launch. The result is a run that fails on its own cleanup.
+
+    Nothing is lost by hiding it: /passive vs /quiet changes whether
+    ActionEnvironmentCheck runs, and that sequence is INSTALL-only. An uninstall
+    behaves identically either way, and the uninstall is not what is under test.
     """
     parts = _split_command(uninstall_string)
     if not parts:
         raise InstallerError(f"could not parse uninstall string: {uninstall_string!r}")
-    command = [*parts, "/passive", "/norestart", "/log", str(log_path)]
+    command = [*parts, f"/{mode}", "/norestart", "/log", str(log_path)]
     return _run("uninstall[arp]", command, log_path, timeout)
 
 

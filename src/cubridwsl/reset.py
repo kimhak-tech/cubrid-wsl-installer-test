@@ -134,7 +134,6 @@ def stop_tray(note: Note | None = None) -> bool:
 def ensure_clean(settings: dict[str, Any],
                  installer: config_mod.InstallerPackage,
                  log_path: Path, *,
-                 mode: str = "passive",
                  expected_name: str | None = None,
                  note: Note | None = None) -> CleanResult:
     """Leave the machine with no CUBRID For WSL on it, or raise saying why not.
@@ -155,11 +154,19 @@ def ensure_clean(settings: dict[str, Any],
     stop_tray(say)
 
     timeout = settings["timeouts"]["uninstall_seconds"]
+    # Always QUIET, whatever mode the install under test uses. A /passive
+    # uninstall draws a "CUBRID For WSL Setup" window that can outlive its own
+    # process, and the wizard driver then refuses to start because it cannot
+    # tell that leftover apart from the window it is about to open. The
+    # /passive-vs-/quiet distinction only affects ActionEnvironmentCheck, which
+    # is sequenced on install and never on uninstall.
     if before.arp.present and before.arp.uninstall_string:
         result = silent.uninstall_with_command(before.arp.uninstall_string,
-                                               log_path, timeout=timeout)
+                                               log_path, timeout=timeout,
+                                               mode="quiet")
     else:
-        result = silent.uninstall(installer, log_path, timeout=timeout, mode=mode)
+        result = silent.uninstall(installer, log_path, timeout=timeout,
+                                  mode="quiet")
     say(f"  reset      : {result.describe()}")
 
     # Never assert on the uninstall exit code -- assert the machine. Removal is
