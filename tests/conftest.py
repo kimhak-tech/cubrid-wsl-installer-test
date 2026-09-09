@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import ntpath
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,20 +62,49 @@ INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install")
 
 
-def _group_key(item: pytest.Item) -> tuple[int, int]:
-    """(environment first, then which machine state the test ends up needing).
+# The case ID carried in a test function name, e.g. test_ops_002_... -> 2.
+_CASE_ID = re.compile(r"test_[a-z]+_(\d+)_")
+
+
+def _case_number(item: pytest.Item) -> int:
+    """The workbook case number in the test's name, or 0 if it carries none."""
+    match = _CASE_ID.match(item.name)
+    return int(match.group(1)) if match else 0
+
+
+def _group_key(item: pytest.Item) -> tuple[int, int, int, int]:
+    """(environment, machine state, observation before action, then case ID).
 
     Sorted by the LAST fixture in INSTALL_FIXTURE_ORDER the test requests, not
     the first: INS-002 asks for BOTH installs, and what decides when it can run
     is the later one. Sorting on the first would put it in the wizard group and
     run it before INS-001 -- against a machine the silent install had not
     produced yet, diffing a snapshot that did not exist.
+
+    The third component is the workbook's observation-vs-action rule, made
+    executable. Within one machine state the cases that only READ what the
+    installer left run before the cases that start, stop, connect or create --
+    so an OPS case can never hand INS-002 a machine with the service stopped or
+    a database it did not install.
+
+    The fourth runs the action cases in WORKBOOK ORDER. That is load-bearing:
+    OPS-001 does not connect to anything, so the evidence that a service cycle
+    is non-destructive is OPS-002 connecting immediately after it on the same
+    machine, and OPS-004 replaces the engine so it has to come last.
+
+    Both of the last two components exist because the alternative is collection
+    order, where `tests/OPS/` sorts ahead of `tests/test_install_*` because an
+    upper-case O precedes a lower-case t, and `test_create_database.py` ahead of
+    `test_service_lifecycle.py` because c precedes s -- neither of which has
+    anything to do with what the cases need.
     """
     environment = 0 if item.get_closest_marker("environment") else 1
+    action = 1 if item.get_closest_marker("action") else 0
     names = set(getattr(item, "fixturenames", ()))
     indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
                if fixture in names]
-    return (environment, max(indices) if indices else -1)
+    return (environment, max(indices) if indices else -1, action,
+            _case_number(item))
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -435,10 +465,10 @@ def check_against_bundle(installer, note):
         if not (arp.display_version or "").startswith(arp_declared):
             problems.append(
                 f"Apps & Features reports version {arp.display_version!r} but "
-                f"the bundle under test declares {arp_declared!r} [absorbed "
-                "Burn writes a four-part version, so a prefix is "
-                "expected -- a mismatch means the entry belongs to a different "
-                "build than the one this run installed.")
+                f"the bundle under test declares {arp_declared!r}. Burn writes "
+                "a four-part version, so a prefix is expected -- a mismatch "
+                "means the entry belongs to a different build than the one "
+                "this run installed.")
 
         # "UninstallString is present and resolves to an executable that EXISTS
         # on disk." That the uninstall string actually WORKS is deliberately NOT

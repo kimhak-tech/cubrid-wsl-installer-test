@@ -620,6 +620,63 @@ def parse_running_brokers(output: str) -> tuple[str, ...]:
     return tuple(names)
 
 
+def parse_started_databases(output: str) -> tuple[str, ...]:
+    """The databases `cubrid service status` lists as started, by name.
+
+    The SERVER section names one line per started database:
+
+        @ cubrid server status
+         Server demodb (rel 11.4, pid 1234)
+
+    An EMPTY section is the normal state after a default install -- stock
+    `cubrid.conf` leaves `server=` commented out, so nothing starts a database
+    and `parse_service_status` reports the server component False. This reads
+    WHICH databases are up, which is what a case needs in order to start one,
+    use it, and put the machine back as it found it.
+
+    Names come back LOWER-CASED, because the section splitter folds case to
+    match component headers. Every database this suite names is lower case;
+    compare case-insensitively if that ever stops being true.
+    """
+    names: list[str] = []
+    for line in _service_sections(output).get("server", []):
+        if not line.startswith(constants.SERVICE_SERVER_RUNNING_PREFIX):
+            continue
+        tokens = line.split()
+        if len(tokens) >= 2:
+            names.append(tokens[1])
+    return tuple(names)
+
+
+def parse_service_command(output: str) -> dict[str, bool | None]:
+    """`cubrid service start` / `stop` output, as a per-component verdict.
+
+    Same section shape as `status`, a different body:
+
+        @ cubrid master stop
+        ++ cubrid master stop: success
+
+    OPS-001 requires the stop and start ACTIONS to be confirmed per component
+    rather than inferred from an exit code, and this is the product stating what
+    it did. Failure is checked FIRST so a section carrying both markers resolves
+    to failed.
+
+    A section with neither marker is None -- unknown, NOT failed. The server
+    section is legitimately empty when no database was started, and reporting
+    that as a failed stop would be a fabricated defect.
+    """
+    verdicts: dict[str, bool | None] = {}
+    for component, lines in _service_sections(output).items():
+        body = " ".join(lines)
+        if constants.SERVICE_COMMAND_FAILURE_MARKER in body:
+            verdicts[component] = False
+        elif constants.SERVICE_COMMAND_SUCCESS_MARKER in body:
+            verdicts[component] = True
+        else:
+            verdicts[component] = None
+    return verdicts
+
+
 def parse_service_status(output: str) -> dict[str, bool | None]:
     """Split `cubrid service status` into a per-component verdict.
 
@@ -798,7 +855,7 @@ class LoginEnvironment:
     `carriage_return` is the specific defect this exists to catch. A CRLF
     ~/.cubrid.sh makes every exported value end in a CR, so $CUBRID/bin and
     $CUBRID_DATABASES both name directories that do not exist -- while the
-    install still reports success. Not hypothetical: found on 2026-09-01.
+    install still reports success. This has happened; it is not hypothetical.
     """
 
     read: bool

@@ -7,6 +7,8 @@ window title inside a test file is a literal nobody will find when it changes.
 """
 from __future__ import annotations
 
+import re
+
 # --------------------------------------------------------------------------- #
 # Registry -- CMakeLists.txt (CUB_REGISTRY_KEY_PATH) and src/cubrid_installer.cpp
 #
@@ -120,7 +122,7 @@ SERVICE_SECTION_PREFIX = "@ cubrid "
 # `server` is PARSED but NOT REQUIRED, and this is a KNOWN COVERAGE GAP against
 # the workbook rather than a judgement that it does not matter. INS-001 lists
 # "server, broker and manager RUNNING"; the check was implemented, it worked,
-# and it was removed on 2026-09-08 at Kimhak's direction.
+# and it was then switched off deliberately.
 #
 # What it found, on build 11.4-1.0.0-0003 with everything else healthy:
 #
@@ -131,7 +133,7 @@ SERVICE_SECTION_PREFIX = "@ cubrid "
 # nothing starts it: CUBRID's stock cubrid.conf leaves `server=` commented out,
 # so `cubrid service start` brings up the master, the broker and the manager
 # and no database. Whether that is a defect (the image should set
-# `server=demodb`) or correct (starting a database is OPS-003's job) is open
+# `server=demodb`) or correct (starting a database is OPS-001's job) is open
 # with development.
 #
 # Restoring the assertion is adding "server" back to this tuple. It is still
@@ -175,6 +177,92 @@ SERVICE_EXPECTED_BROKERS = ("query_editor", "broker1")
 SERVICE_NOT_RUNNING_MARKER = "is not running"
 SERVICE_IS_RUNNING_MARKER = "is running"
 SERVICE_SERVER_RUNNING_PREFIX = "server "
+
+# `cubrid service start` and `cubrid service stop` report per component the same
+# way `status` does -- one "@ cubrid <component> <verb>" section each, whose body
+# carries the verdict:
+#
+#     @ cubrid master stop
+#     ++ cubrid master stop: success
+#
+# OPS-001 requires the stop and start ACTIONS to be confirmed, not merely a zero
+# exit code, so the command's own output is parsed (state.parse_service_command)
+# rather than trusted. A section with neither marker reads None -- unknown, not
+# failed. The server section is legitimately EMPTY when no database is started,
+# which is the normal post-install state.
+SERVICE_COMMAND_SUCCESS_MARKER = ": success"
+SERVICE_COMMAND_FAILURE_MARKER = ": fail"
+
+# --------------------------------------------------------------------------- #
+# Category 03, CUBRID Operational
+#
+# Nothing here comes from the installer source: these are facts about CUBRID and
+# about the demodb sample the image ships, so they are recorded rather than
+# derived, exactly like SERVICE_EXPECTED_BROKERS.
+# --------------------------------------------------------------------------- #
+DEMODB_NAME = "demodb"
+
+# The tables the shipped demodb sample carries -- CUBRID's "olympic" dataset.
+#
+# Asserted as a SUBSET of what `db_class` reports, never as equality: an added
+# table is not a defect, a missing one is. The observed list is printed in the
+# run notes on every run, passing or failing, so a wrong entry here is one
+# constant edit and never a silent gap.
+#
+# Confirmed against a real machine: `db_class` reported exactly this set.
+DEMODB_TABLES = ("athlete", "code", "event", "game", "history", "nation",
+                 "olympic", "participant", "record", "stadium")
+
+# The one table OPS-002 reads row-for-row. Small, so `SELECT *` is cheap.
+DEMODB_KNOWN_TABLE = "code"
+
+# CUBRID's built-in administrator. demodb ships with no password for it, which
+# is why none is passed -- and why a password prompt would hang, so csql is
+# always given a user explicitly.
+CSQL_DBA = "dba"
+
+# OPS-002's scratch table. Named so a leftover from a failed run is obviously
+# this suite's and not a tester's.
+OPS_SCRATCH_TABLE = "qa_ops_scratch"
+
+# OPS-003 creates this database and deletes it again. `en_US` is the locale the
+# workbook's step names.
+OPS_TESTDB_NAME = "testdb"
+OPS_TESTDB_LOCALE = "en_US"
+
+# CUBRID's Linux engine installer (`CUBRID-<version>-Linux.x86_64.sh`) is a
+# self-extracting archive that PROMPTS, and there is no documented unattended
+# flag, so every prompt is fed this answer.
+#
+# "y", NOT "yes". The `[yN]` / `[Yn]` prompts match on the FIRST CHARACTER, so
+# "y" is affirmative whichever way the default is capitalised and "yes" is
+# rejected outright ("License not accepted. Exiting ...").
+#
+# With the default `upgrade.installer_args` the installer asks nothing and this
+# is only a backstop. OPS-004 writes the full transcript to
+# ops_004_installer.json, which is where an unanticipated prompt shows up.
+ENGINE_INSTALLER_ANSWER = "y"
+
+# The version inside a CUBRID engine package name, e.g.
+#   CUBRID-11.4.5.1866-e9c17f7-Linux.x86_64.sh  ->  11.4.5.1866-e9c17f7
+#
+# OPS-004 asserts that string appears in `cubrid_rel`, which prints it verbatim
+# in its parentheses:
+#   CUBRID 11.4.5 (11.4.5.1866-e9c17f7) (64bit release build for Linux) ...
+#
+# Reading it out of the FILENAME is what makes "the installed version matches
+# what was installed" a single fact with a single source -- the same reason
+# config.INSTALLER_RE reads the bundle's version out of its name rather than
+# having it configured twice. A name that carries no version (`11.4-latest`)
+# does not match, and OPS-004 says so rather than asserting nothing.
+ENGINE_PACKAGE_RE = re.compile(
+    r"^CUBRID-(?P<version>[0-9][0-9.]*(?:-[0-9a-f]{4,})?)-Linux",
+    re.IGNORECASE)
+
+# The system catalog view listing every class, and the flag separating the
+# product's own catalog classes from a user's tables.
+CATALOG_CLASS_VIEW = "db_class"
+CATALOG_USER_CLASS_PREDICATE = "is_system_class = 'NO'"
 
 # --------------------------------------------------------------------------- #
 # Wizard UI strings -- wix_src/strings/*.wxl

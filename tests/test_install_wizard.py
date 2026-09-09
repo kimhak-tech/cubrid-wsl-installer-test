@@ -1,30 +1,17 @@
-"""Installer Orchestration -- INS-001, the case the others are measured against.
+"""Installer Orchestration -- INS-001, full default install via the wizard.
 
-    INS-001  Full default installation via the GUI wizard, with the complete
-             post-install state verified
+OWNS the post-install assertion set: everything observable after a successful
+install without performing an action. Six other cases reference it rather than
+restating it, so a check added to `verify.CHECKS` strengthens all of them.
 
-INS-001 is the centre of the matrix after the 2026-09-07 consolidation: it OWNS
-the post-install assertion set, absorbing nine rows that were superseded or
-deleted outright. Which rows those were is recorded in the workbook, not here --
-the INS sheet was renumbered on 2026-09-08 and those old numbers now belong to
-different cases, so repeating them in code would be a trap rather than a
-reference.
+Verifies:
+- the wizard advances every page from Welcome to Finish on defaults
+- the post-install set in `verify.CHECKS` holds -- registry, distro and WSL
+  version, service components, brokers, demodb, login environment, startup
+  entry, both shortcuts, Apps & Features
+- `cubrid_rel` and the Apps & Features version match the bundle under test
 
-What that ownership means in practice: the assertions live in verify.CHECKS and
-in the check_against_bundle fixture, so INS-002 and INS-004 make exactly the
-same ones without a second copy existing anywhere.
-
-ONE workbook case, ONE test function, ONE result. The workbook has a single
-Status cell for INS-001, so a run that produced five separate results would make
-"did INS-001 pass?" a question with five answers.
-
-That is only safe because the test COLLECTS its problems and asserts once at the
-end. A function that asserted as it went would stop at the first failure and
-hide the rest -- and each hidden failure costs another install cycle to find, at
-about ninety seconds a time. Nothing below returns early.
-
-DESTRUCTIVE, and it drives the real mouse and keyboard: do not use the machine
-while this runs. Needs an elevated shell and `pip install -e .[ui]`.
+DESTRUCTIVE, elevated, and it drives the real mouse and keyboard.
 """
 from __future__ import annotations
 
@@ -53,7 +40,6 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
 
     **INSTALL COMPLETION** -- the wizard ran end to end with every default
     component present. Proceeding past the environment gate is the assertion
-    absorbed from ENV-001.
 
     **POST-INSTALL STATE -- OBSERVED, NO ACTION PERFORMED.** The boundary is
     quoted from the workbook because it decides what may ever be added here:
@@ -203,7 +189,7 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     # ----------------------------------------------------------------- #
     note("  INS-001-gap    : GAP -- the CUBRID SERVER component is not asserted, "
          "only master, broker and manager [INS-001 lists 'server, broker and "
-         "manager RUNNING']. Removed 2026-09-08: the `@ cubrid server status` "
+         "manager RUNNING']. The `@ cubrid server status` "
          "section is EMPTY on a healthy install because stock cubrid.conf "
          "leaves `server=` commented out, so no database is started. Whether "
          "the image should set server=demodb is open with development. The "
@@ -211,8 +197,8 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     note("  INS-001-gap    : GAP -- desktop shortcut TARGETS and ICONS are not "
          "asserted, only that both .lnk files exist [the workbook asks for 'a "
          "target that exists on disk with the correct icon -- not merely "
-         "present by filename']. Removed 2026-09-08: "
-         "the product does not do this correctly yet. The tray link names no "
+         "present by filename']. The product does not do this correctly yet: "
+         "the tray link names no "
          "target at all -- CubridCustomActions.cpp builds it as installDir + "
          "'\\\\' + trayAppFile and InstallDir already ends in a separator, so "
          "Windows saves it with no LocalBasePath. Both links are still parsed "

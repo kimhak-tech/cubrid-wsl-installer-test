@@ -1,29 +1,18 @@
-"""Installer Orchestration -- INS-002, the silent twin of INS-001.
+"""Installer Orchestration -- INS-002, full default install via the silent CLI.
 
-    INS-002  Full default installation via the silent / unattended CLI
+The same install as INS-001 through `/quiet`. Its value is the DIFF, not a
+second success check.
 
-Same defaults, same assertions, different driver. The ID was REUSED on
-2026-09-08: it previously meant "Select WSL2 mode explicitly", which was
-superseded into INS-001's post-install block on 2026-09-07. Reports predating
-2026-09-08 that cite INS-002 mean the old case.
+Verifies:
+- the bundle exits acceptably and displays no UI (WixBundleUILevel = 2)
+- INS-001's post-install set holds, through the same comparison object
+- the resulting machine is field-for-field equivalent to the wizard's
 
-What makes this worth a second install cycle is NOT that the assertions pass
-again -- it is the DIFF. The workbook is explicit: *"Its value is the DIFF
-against INS-001 -- a state comparison rather than a success check. Keep it that
-way; re-listing INS-001's assertions here would recreate the duplication this
-matrix was cleaned up to remove."*
+Scope limit: `/quiet` skips ActionEnvironmentCheck entirely, so a green run is
+no evidence the prerequisite gate works -- ENV-008 and ENV-009 own that.
 
-So this file does three things and no more:
-
-    1. the bundle exited acceptably, and NO UI was displayed
-    2. INS-001's post-install set holds here too -- via the SAME comparison
-       object, not a second copy of the assertions
-    3. the resulting machine is EQUIVALENT to the one the wizard produced
-
-DESTRUCTIVE; needs an elevated shell. ONE install cycle -- it does not build
-INS-001's machine, it finds the snapshot INS-001 left. When both run in the same
-session INS-001 goes first (conftest.INSTALL_FIXTURE_ORDER), so the reference is
-this session's own.
+DESTRUCTIVE, elevated. One install cycle: it finds INS-001's snapshot rather
+than building it.
 """
 from __future__ import annotations
 

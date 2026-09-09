@@ -106,8 +106,8 @@ CHECKS: tuple[Check, ...] = (
     # asks for. The workbook requires each shortcut to "resolve to a target
     # that exists on disk with the correct
     # icon -- not merely present by filename". Those three checks per shortcut
-    # were implemented, they worked, and they were REMOVED on 2026-09-08 at
-    # Kimhak's direction because the product does not yet do this correctly:
+    # were implemented, they worked, and they were REMOVED deliberately because
+    # the product does not yet do this correctly:
     #
     #   the tray shortcut names NO target at all. CubridCustomActions.cpp builds
     #   it as `installDir + "\\" + trayAppFile` and InstallDir is stored WITH a
@@ -222,8 +222,8 @@ CHECKS: tuple[Check, ...] = (
           requires="environment.read"),
     # A CRLF ~/.cubrid.sh makes every exported value end in a carriage return,
     # so $CUBRID/bin and $CUBRID_DATABASES both name directories that do not
-    # exist -- while the install still reports success. Found for real on
-    # 2026-09-01, which is why it is a standing check and not a comment.
+    # exist -- while the install still reports success. This has happened, which
+    # is why it is a standing check and not a comment.
     Check("environment.no_carriage_return", "environment", lambda o: False,
           lambda s: s.login_environment.carriage_return,
           requires="environment.read"),

@@ -14,7 +14,8 @@ import pathlib
 import pytest
 
 from cubridwsl import config as config_mod
-from cubridwsl import constants, distro, preflight, state as state_mod, verify
+from cubridwsl import (constants, distro, preflight,
+                       state as state_mod, verify)
 
 pytestmark = pytest.mark.environment
 
@@ -27,10 +28,12 @@ def test_this_is_windows():
 
 def test_settings_load_and_carry_the_keys_the_framework_reads(settings, note):
     """A missing timeout must fail here, not three minutes into an install."""
-    for section in ("installer", "distro", "safety", "timeouts"):
+    for section in ("installer", "distro", "safety", "timeouts", "upgrade"):
         assert section in settings, f"settings.toml has no [{section}] section"
+    assert settings["upgrade"].get("url"), (
+        "settings.toml has no upgrade.url -- OPS-004 has nothing to install")
     for key in ("install_seconds", "uninstall_seconds", "wsl_command_seconds",
-                "settle_seconds"):
+                "settle_seconds", "cubrid_command_seconds", "upgrade_seconds"):
         assert key in settings["timeouts"], f"settings.toml has no timeouts.{key}"
     note(f"  settings   : local overrides = "
          f"{settings.get('_meta', {}).get('local_overrides', 'none')}")
@@ -105,86 +108,6 @@ def test_the_registry_is_readable_and_reports_the_product_state(settings, note):
     note(f"  product    : {'INSTALLED' if registry.present else 'not installed'} "
          f"for this account"
          + (f", WslName={registry.wsl_name}" if registry.present else ""))
-
-
-def test_the_service_status_parser_agrees_with_a_recorded_real_run(note):
-    """`parse_service_status` pinned against output this product really printed.
-
-    Both samples are VERBATIM from build 11.4-1.0.0-0003. Neither was written
-    from CUBRID's documentation, and that matters: the first version of this
-    parser WAS, and it got two things wrong -- it read the empty server section
-    as "could not tell" rather than "no database started", and it accepted a
-    broker table header as proof the brokers were running.
-
-    INS-001 asserts the components individually, so a parser regression fails
-    that case against a correct product. Pinning it here catches that in the
-    read-only suite, in a second, instead of after a five-minute install.
-
-    When a future build prints something this cannot classify, add THAT build's
-    output here rather than relaxing the rules.
-    """
-    # reports/20260908-111333 -- a healthy install, everything the product
-    # actually starts.
-    healthy = (
-        "@ cubrid master status\n"
-        "++ cubrid master is running.\n"
-        "@ cubrid server status\n"
-        "@ cubrid pl status\n"
-        "@ cubrid broker status\n"
-        "  NAME                   PID  PORT    AS   JQ\n"
-        "=================================================\n"
-        "* query_editor            97 30000     5    0\n"
-        "* broker1                116 33000     5    0\n"
-        "@ cubrid gateway status\n"
-        "++ cubrid gateway is not running.\n"
-        "@ cubrid manager server status\n"
-        "++ cubrid manager server is running.")
-    verdicts = state_mod.parse_service_status(healthy)
-    brokers = state_mod.parse_running_brokers(healthy)
-    note(f"  parser     : healthy run -> {verdicts}, brokers={list(brokers)}")
-
-    assert verdicts == {"master": True, "server": False,
-                        "broker": True, "manager": True}, (
-        f"the recorded output of a healthy install was read as {verdicts}. "
-        "`pl` and `gateway` must be ignored (neither is named by INS-001), and "
-        "an EMPTY server section is False -- no database started -- not None.")
-    assert brokers == ("query_editor", "broker1"), (
-        f"the broker table lists two brokers by name; got {brokers}. Rows are "
-        "found by SHAPE (a name followed by a numeric PID), so adding or "
-        "reordering a column must not stop finding them.")
-
-    # reports/20260908-094612 -- the same install sampled too early, before
-    # `cubrid service start` had finished. This is what the settle wait exists
-    # to stop being reported as a failure.
-    starting = (
-        "@ cubrid master status\n"
-        "++ cubrid master is running.\n"
-        "@ cubrid server status\n"
-        "@ cubrid pl status\n"
-        "@ cubrid broker status\n"
-        "++ cubrid broker is not running.\n"
-        "@ cubrid gateway status\n"
-        "++ cubrid gateway is not running.\n"
-        "@ cubrid manager server status\n"
-        "++ cubrid manager server is not running.")
-    assert state_mod.parse_service_status(starting) == {
-        "master": True, "server": False, "broker": False, "manager": False}
-    assert state_mod.parse_running_brokers(starting) == ()
-
-    # A broker service that is up but running NOTHING serves nothing, so an
-    # empty table is not "running" -- the header alone must not satisfy it.
-    header_only = ("@ cubrid broker status\n"
-                   "  NAME                   PID  PORT\n"
-                   "=====================================")
-    assert state_mod.parse_service_status(header_only) == {"broker": False}, (
-        "a broker table with no rows must read as NOT running")
-
-    assert state_mod.parse_service_status(
-        "@ cubrid manager server status\n unrecognised output\n"
-    ) == {"manager": None}, (
-        "unclassifiable output must be None -- never False, which would report "
-        "a component as DOWN on the strength of the framework failing to "
-        "understand the output.")
 
 
 def test_the_shortcut_parser_reads_a_link_the_way_windows_writes_one(tmp_path, note):

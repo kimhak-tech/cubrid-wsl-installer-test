@@ -1,34 +1,19 @@
-"""Installer Orchestration -- INS-004, every option off its default.
+"""Installer Orchestration -- INS-004, every install option off its default.
 
-    INS-004  Install with every option changed from its default, via the GUI wizard
+INS-001's assertion set with the options inverted, which costs nothing extra
+because every expectation in `verify.CHECKS` is derived from the options the
+machine was installed with.
 
-Consolidated on 2026-09-08 from five single-option cases (install path, custom
-distro name, demodb off, Tray auto-start off, shortcuts off): 3 installs became
-1. That is safe because the five effects land on DISJOINT artifacts -- the
-InstallDir registry value, the distro name, databases.txt, the Run key and the
-desktop .lnk files -- so combining them costs no fault isolation. A failure
-still names exactly one artifact.
+Verifies:
+- the five changed options land on five different artifacts: install directory,
+  distro name, databases.txt, the Run key and the desktop .lnk files
+- the post-install set holds against those inverted expectations
 
-The positive reason to combine, from the workbook: an install with every option
-off its default is the configuration most likely to expose an option-INTERACTION
-defect, which single-option cases structurally cannot find. This matrix already
-holds one of that family -- ActionRegisterStarterApp registering
-CUBRID_WSL_Starter unconditionally.
+Wizard-only: the bundle does not forward INSTALLFOLDER, and
+ActionUpdateInstallFolder overwrites it under UILevel < 5, so no silent command
+line can express an install directory.
 
-WHY THIS WAS BLOCKED: the option checkboxes are declared `Text=" "` with their
-captions in separate sibling controls, so none of them exposes an accessible
-name and none can be found by title. The driver pairs each box with the label on
-its row instead (constants.OPTION_LABELS). That is a workaround for a product
-defect -- report the missing accessible names against TOOLS-4932; with them, all
-of it becomes a lookup by name.
-
-Wizard-only, and not by preference: the bundle forwards six properties to the
-MSI and INSTALLFOLDER is not among them, and ActionUpdateInstallFolder overwrites
-the folder under `UILevel < 5` regardless -- so no silent command line can
-express an install directory. See verify._install_dir_for.
-
-DESTRUCTIVE, and it drives the real mouse and keyboard. Needs an elevated shell
-and `pip install -e .[ui]`.
+DESTRUCTIVE, elevated, drives the real mouse and keyboard.
 """
 from __future__ import annotations
 
