@@ -192,10 +192,15 @@ def run_report(run_dir, request) -> dict[str, Any]:
     _INSTALLS.clear()
     _RUN_FACTS.update({
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        # The format of every state-*.json this run writes. INS-002 may diff
+        # against one of them in a LATER run, and a baseline written to a
+        # different format reads as product differences -- see
+        # state.REPORT_SCHEMA and _usable_reference.
+        "state_schema": state_mod.REPORT_SCHEMA,
         # No run-wide "install mode": each driver pins its own, and every
         # install below records the exact command line it ran. A single
-        # top-level field could only repeat one of them, and it used to say
-        # "passive" while the silent install ran /quiet.
+        # top-level field could only repeat ONE of them while claiming to
+        # describe the run.
         **preflight.describe(),
     })
     _write_json(path, _RUN_FACTS)
@@ -490,8 +495,7 @@ def check_against_bundle(installer, note):
                             "UninstallString, so Windows cannot remove the "
                             "product.")
         else:
-            executable = Path(
-                arp.uninstall_string.strip().strip('"').split('"')[0])
+            executable = Path(_executable_in(arp.uninstall_string))
             if not executable.is_file():
                 problems.append(
                     f"the uninstall command names {executable}, which is not "
@@ -500,6 +504,24 @@ def check_against_bundle(installer, note):
                     "machine with this exact command.")
         return problems
     return _check
+
+
+def _executable_in(command: str) -> str:
+    """The program a Windows command line names, without its arguments.
+
+    Burn writes the path QUOTED, and this handles that. It does not ASSUME it:
+    an unquoted string split on the quote character returns the whole line,
+    arguments included, and `is_file()` then fails on a perfectly good uninstall
+    command -- reporting a product defect that is a parsing bug here. Quoting is
+    the product's choice to change, so it is read, not required.
+
+    A space in an unquoted path is unsplittable by any rule; Windows itself has
+    the same problem, so a path like that is broken before this sees it.
+    """
+    command = command.strip()
+    if command.startswith('"'):
+        return command[1:].split('"', 1)[0]
+    return command.split(" ", 1)[0]
 
 
 @dataclass(frozen=True)
@@ -560,10 +582,15 @@ def _usable_reference(run: Path,
                       ) -> WizardReference | None:
     """One past run, if its wizard snapshot is a legitimate baseline.
 
-    Three gates, and each rules out a class of false difference -- a diff
+    Four gates, and each rules out a class of false difference -- a diff
     against a bad baseline reports the BASELINE's problems as INS-002 findings,
     which is worse than having no baseline at all:
 
+    * **the same REPORT FORMAT.** `diff_reports` renders a key one side lacks as
+      `<absent>`, so a snapshot written before a field was added to
+      `MachineState.as_dict()` differs from a healthy machine on every one of
+      them. A run.json with no `state_schema`, or a different one, is refused --
+      which is why the number must be bumped whenever the format changes.
     * **the same bundle**, by SHA-256 rather than filename. The build number in
       the name is a commit count, so two different binaries can share one.
     * **the same account.** The product writes to HKCU and to that user's
@@ -580,6 +607,8 @@ def _usable_reference(run: Path,
         return None
     try:
         facts = json.loads(facts_path.read_text(encoding="utf-8"))
+        if facts.get("state_schema") != state_mod.REPORT_SCHEMA:
+            return None
         if facts.get("installer", {}).get("sha256") != installer.sha256:
             return None
         if facts.get("account") != preflight.current_account():

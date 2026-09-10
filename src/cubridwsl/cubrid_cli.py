@@ -479,12 +479,9 @@ class CubridCli:
             Do you accept the license? [yN]:
             License not accepted. Exiting ...
 
-        which is indistinguishable from the answers being wrong. Two runs of
-        OPS-004 were spent on the answer WORD ("yes", then "y") before the
-        SHAPE of the command was suspected; both failed for this reason and
-        neither had anything to do with the word. `{ ... ; }` takes the
-        redirect and the pipe inside still wins -- verified by running both
-        forms against a stub that reads one line.
+        which is indistinguishable from the answers being wrong -- so suspect
+        the SHAPE of the command before the answer word. `{ ... ; }` takes the
+        redirect and the pipe inside still wins.
 
         `yes <answer> |` then feeds that word to every prompt. `args` passes
         installer options ahead of it, for the case where a prompt needs
@@ -497,8 +494,14 @@ class CubridCli:
         report, which is what makes an unanticipated prompt visible rather than
         silent.
 
-        NOT detached: this must finish before anything reads the result, and it
-        leaves no daemon behind -- the service is stopped across it.
+        NOT detached: it must finish before anything reads the result and it
+        starts no daemon of its own.
+
+        It does NOT stop CUBRID first, and neither does OPS-004 -- the engine is
+        replaced underneath a RUNNING service, which is what the case currently
+        exercises. If the product turns out to require a stopped service, that
+        is a precondition for the case to establish, not a stop to hide here
+        where the caller cannot see it.
         """
         quoted = shlex.quote(filename)
         options = f" {args}" if args else ""

@@ -158,12 +158,13 @@ Run a specific case, or a whole category:
 
 ```powershell
 .\run-tests.ps1 -Case INS-001
-.\run-tests.ps1 -Case OPS       # every OPS case -- the ID is a substring match
+.\run-tests.ps1 -Case OPS       # a bare category runs every case in it
 ```
 
-The `silent` suite runs off **two installs**: INS-002 and every OPS case share
-`silent_install`'s machine rather than provisioning their own, and INS-004 adds
-one more because WSL 1 is a different machine, not a different assertion.
+Every suite installs once per **machine state** it needs, not once per case —
+which is what keeps a full run in minutes rather than hours. To see what a given
+selection actually costs before running it, `pytest --setup-plan -m silent`
+lists each session fixture exactly once where it is set up.
 
 List every case without executing anything — this, not a table in this file, is
 the current inventory:
@@ -174,9 +175,13 @@ the current inventory:
 
 What each case asserts is in its own file's docstring, under `Verifies:`.
 
-Other options: `-Installer <path>` for a one-off build, and
-`-Mode passive|quiet` to choose the bundle's UI mode — not cosmetic, since
-`/passive` runs the installer's environment checks and `/quiet` skips them.
+Other options: `-Installer <path>` for a one-off build.
+
+The bundle's UI mode is **not** a runner option. Each driver pins its own, and
+the choice is not cosmetic: `/passive` runs the installer's environment checks
+while `/quiet` skips them, so a case that names one has to keep it. Cleanup
+always uninstalls `/quiet`, because a `/passive` uninstall draws a window the
+wizard driver cannot tell apart from the one it is about to open.
 
 The environment checks always run first, whichever suite you ask for, so a
 broken setup fails in a second rather than after a five-minute install.

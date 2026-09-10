@@ -642,9 +642,9 @@ def set_option(win, option: str, want: bool, *, settle: float = 5,
     dialog does not toggle for it: an MSI CheckBox is not a self-toggling
     BS_AUTOCHECKBOX -- the state lives in the MSI property, and MSI's own dialog
     procedure is what flips it when it sees the click go through the message
-    loop. So the posted click was read, the box stayed on, and the driver
-    reported that it "did not take". It never had. This is the same input the
-    licence checkbox already takes, which is why that one always worked.
+    loop. A posted click is therefore READ and does nothing, which the read-back
+    below reports as "the click did not take". This is the same input the
+    licence checkbox takes.
 
     Then POLLED, not read once. Real input is asynchronous -- SendInput returns
     before the dialog has processed anything -- so an immediate read is a race
@@ -689,11 +689,9 @@ def set_option(win, option: str, want: bool, *, settle: float = 5,
     return f"{option}={int(want)}"
 
 
-def set_text_field(win, labels: tuple[str, ...], value: str, *,
-                   kinds: tuple[str, ...] = constants.TEXT_FIELD_CLASSES,
-                   side: str = "right", settle: float = 5,
-                   note: Callable[[str], None] | None = None) -> str:
-    """Type a value into the field beside a label, and read it back.
+def type_into(field, value: str, *, settle: float = 5,
+              matches: Callable[[str], bool] | None = None) -> str:
+    """Clear a field, type `value` into it, and POLL until it reads back.
 
     Typed with the keyboard rather than set with WM_SETTEXT. MSI reads a
     control's value through its own notifications, and a silently-set field can
@@ -701,13 +699,18 @@ def set_text_field(win, labels: tuple[str, ...], value: str, *,
     the DEFAULT value and every assertion about the custom one fails, blaming
     the product.
 
-    The read-back is POLLED for the same reason the option checkboxes are:
-    typing is real input, and SendInput returns before the dialog's message
-    loop has caught up. Reading once turns a working driver into one that
-    fails a few runs in ten.
+    POLLED, not read once. Typing is real input and SendInput returns before the
+    dialog's message loop has caught up, so an immediate read is a race the
+    driver loses at random -- a few runs in ten, which is the worst kind. Every
+    caller goes through here for that reason; a second read-back written inline
+    is a second one free to forget it.
+
+    Returns the LAST text read, whether or not it matched, so the caller raises
+    with the value the dialog actually holds. `matches` overrides the comparison
+    for a field the dialog normalises as you type -- the directory field appends
+    a trailing separator.
     """
-    say = note or (lambda _text: None)
-    field = _find_labelled_control(win, labels, kinds, side=side)
+    accept = matches or (lambda written: written == value)
     field.click_input()
     field.type_keys("^a{DEL}", set_foreground=False)
     field.type_keys(value, with_spaces=True, set_foreground=False)
@@ -715,10 +718,24 @@ def set_text_field(win, labels: tuple[str, ...], value: str, *,
     deadline = time.time() + settle
     while True:
         written = _text_of(field)
-        if written == value or time.time() >= deadline:
-            break
+        if accept(written) or time.time() >= deadline:
+            return written
         time.sleep(0.1)
 
+
+def set_text_field(win, labels: tuple[str, ...], value: str, *,
+                   kinds: tuple[str, ...] = constants.TEXT_FIELD_CLASSES,
+                   side: str = "right", settle: float = 5,
+                   note: Callable[[str], None] | None = None) -> str:
+    """Type a value into the field beside a label, and read it back.
+
+    The pairing is the part that is specific to this function: the option and
+    name controls carry no accessible name, so they are reached through the
+    label on their row. The typing and the polled read-back are `type_into`.
+    """
+    say = note or (lambda _text: None)
+    field = _find_labelled_control(win, labels, kinds, side=side)
+    written = type_into(field, value, settle=settle)
     if written != value:
         raise WizardError(
             f"typed {value!r} into the field beside {labels[0]!r} but after "
@@ -730,11 +747,16 @@ def set_text_field(win, labels: tuple[str, ...], value: str, *,
 def _unsupported_options(options: dict[str, Any]) -> dict[str, Any]:
     """Options that differ from the defaults AND the wizard cannot drive.
 
-    The driver used to refuse every non-default option outright, because the
-    only way to reach a checkbox was positional indexing. Now that each one is
-    found through its label, it refuses only what it genuinely cannot set --
-    which today is nothing, but keeps the guarantee that a scenario is either
-    driven or rejected, never quietly ignored.
+    The guarantee this exists to keep: a scenario is either DRIVEN or REJECTED,
+    never quietly ignored. So the test is membership of
+    `constants.OPTION_LABELS`, which is exactly the set `_options` below walks
+    -- the two read the same dict, so an option cannot be accepted here and then
+    left untouched there.
+
+    START_TRAY_APP is the one that makes this worth stating. It has a label, but
+    it lives on CustomFinishDlg rather than InstallOptionsDlg and no step drives
+    that page, so it is deliberately NOT in OPTION_LABELS and lands here instead
+    -- see constants.FINISH_PAGE_OPTION_LABELS.
     """
     return {key: value for key, value in options.items()
             if key in constants.INSTALL_OPTIONS
@@ -829,8 +851,10 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     overwrites INSTALLFOLDER whenever UILevel < 5, so a directory passed on a
     silent command line is discarded. The wizard is the only way to set it.
 
-    START_TRAY_APP lives on the FINISH page, not the options page, so it is set
-    after the install has already run -- which is where the product puts it.
+    START_TRAY_APP is NOT settable here. It lives on CustomFinishDlg, which no
+    step drives, so it is absent from `constants.OPTION_LABELS` and a scenario
+    asking for a non-default value is REFUSED below rather than accepted and
+    ignored.
     """
     say = note or (lambda _text: None)
     preflight.require_elevation(preflight.WIZARD_REASON)
@@ -875,8 +899,10 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
                     "CUB_DEFAULT_WSL_NAME"]:
                 performed.append(set_text_field(
                     win, constants.WSL_NAME_LABEL, wanted_name, note=say))
-            for option in ("REG_TRAY_APP", "CREATE_SHORTCUT", "CREATE_DEMODB",
-                           "IS_WSL2_MODE"):
+            # Driven off OPTION_LABELS, not a list repeated here: that dict is
+            # also what `_unsupported_options` accepts, so a second list is a
+            # list that can accept an option this loop never touches.
+            for option in constants.OPTION_LABELS:
                 if option in options:
                     performed.append(set_option(
                         win, option, bool(int(options[option])), note=say))
@@ -897,10 +923,12 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
             if field is None:
                 raise WizardError("no directory field on the installation "
                                   "directory page.\n" + _describe_controls(win))
-            field.click_input()
-            field.type_keys("^a{DEL}", set_foreground=False)
-            field.type_keys(install_dir, with_spaces=True, set_foreground=False)
-            written = _text_of(field)
+            # Compared with the trailing separator stripped: the dialog
+            # appends one to a directory it recognises.
+            written = type_into(
+                field, install_dir,
+                matches=lambda text: (text.rstrip("\\")
+                                      == install_dir.rstrip("\\")))
             if written.rstrip("\\") != install_dir.rstrip("\\"):
                 raise WizardError(f"typed {install_dir!r} into the directory "
                                   f"field but it reads {written!r}")

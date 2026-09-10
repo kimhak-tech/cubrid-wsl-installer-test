@@ -30,9 +30,9 @@ class Check:
     `requires` names a check this one depends on. When that prerequisite fails,
     this check is reported as SKIPPED rather than as a second failure -- because
     it is not an independent finding. One unreadable `cubrid service status`
-    used to produce four failure lines for one cause, and a login shell that
-    would not open produced five; the extra lines said nothing the first did not
-    and buried the one line that carried the reason.
+    would otherwise fail four checks for one cause, and a login shell that will
+    not open fails five -- extra lines that say nothing the first does not, and
+    bury the one line carrying the reason.
 
     Skipping is not the same as passing. A skipped check is printed as `[skip]`
     with the prerequisite that caused it, and it is in the JSON report, so a
@@ -103,11 +103,10 @@ CHECKS: tuple[Check, ...] = (
     # appearing without the other is a product defect.
     #
     # EXISTENCE ONLY, deliberately, and this is a REDUCTION from what INS-001
-    # asks for. The workbook requires each shortcut to "resolve to a target
-    # that exists on disk with the correct
-    # icon -- not merely present by filename". Those three checks per shortcut
-    # were implemented, they worked, and they were REMOVED deliberately because
-    # the product does not yet do this correctly:
+    # asks for. The workbook requires each shortcut to "resolve to a target that
+    # exists on disk with the correct icon -- not merely present by filename".
+    # Those three checks per shortcut are switched off because the product does
+    # not yet do this correctly:
     #
     #   the tray shortcut names NO target at all. CubridCustomActions.cpp builds
     #   it as `installDir + "\\" + trayAppFile` and InstallDir is stored WITH a

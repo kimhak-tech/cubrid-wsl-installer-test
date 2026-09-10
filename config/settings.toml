@@ -56,20 +56,15 @@ settle_seconds = 300
 # Point it at a specific build to test a specific upgrade. It may also be a
 # path to a .sh already inside the distribution -- anything wget accepts, or an
 # absolute guest path.
-# PINNED, not `11.4_latest`. On 2026-09-09 the `11.4_latest` path served
-# 11.4.5.1866-e9c17f7 -- the transcript's first line is the installer's own
-# version -- so "latest" was neither latest nor stable enough to assert against.
-# Naming the build makes the run reproducible and lets expect_version below be
-# a real assertion.
+# PIN A BUILD; never point this at a `-latest-` path. A moving target makes the
+# run unreproducible, and OPS-004 reads the version it asserts out of this
+# filename -- a name carrying no version leaves the case with nothing to check.
 url = "https://ftp.cubrid.org/CUBRID_Engine/11.4.5/CUBRID-11.4.5.1866-e9c17f7-Linux.x86_64.sh"
 
-# The version the upgrade is expected to produce, matched as a substring of
-# `cubrid_rel` (e.g. "11.4.6.1").
-#
-# There is no expected-version setting: OPS-004 reads it out of the PACKAGE
-# NAME, so the url above is the only thing to change and the two can never
-# disagree. A name without a version in it (`CUBRID-11.4-latest-...`) cannot be
-# checked, and the case reports that rather than asserting nothing.
+# There is deliberately NO expected-version setting. OPS-004 reads the version
+# out of the PACKAGE NAME above, so the url is the only thing to change and the
+# two can never disagree. A name carrying no version (`CUBRID-11.4-latest-...`)
+# cannot be checked, and the case reports that rather than asserting nothing.
 #
 # NOTE THE DIRECTION: 11.4.5 is OLDER than the 11.4.6 the image ships, so as
 # configured this replaces the engine rather than upgrading it. The workbook's

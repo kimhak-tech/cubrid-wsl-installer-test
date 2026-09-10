@@ -343,6 +343,12 @@ WIZARD_STRINGS = {
 # names should be reported against TOOLS-4932 -- with them, all of this becomes
 # a lookup by name.
 # --------------------------------------------------------------------------- #
+# THIS DICT IS THE DRIVER'S CONTRACT, NOT A GLOSSARY. `wizard.install` sets
+# every option in it and refuses any non-default option that is NOT in it, so an
+# entry here is a promise that the driver drives that option on
+# InstallOptionsDlg. A label added for reference alone turns that promise into a
+# silent no-op: the driver accepts the option, never clicks anything, and the
+# resulting comparison reports a PRODUCT defect that is really a driver gap.
 OPTION_LABELS = {
     # bundle variable  ->  the label text, every language it ships in
     "REG_TRAY_APP": ("Register Tray application to Windows Startup",
@@ -351,8 +357,14 @@ OPTION_LABELS = {
     "CREATE_DEMODB": ('Create a sample "demodb" database',
                       '샘플 "demodb" 데이터베이스 생성'),
     "IS_WSL2_MODE": ("Install in WSL2 mode", "WSL2 모드로 설치"),
-    # On CustomFinishDlg, NOT InstallOptionsDlg -- the wizard offers this one
-    # only at the end, so a scenario that changes it must act after the install.
+}
+
+# START_TRAY_APP is on CustomFinishDlg, not InstallOptionsDlg: the wizard offers
+# it only after the install has already run. It is kept OUT of OPTION_LABELS
+# above so `_unsupported_options` refuses a scenario that asks for it, which is
+# the honest answer until a driver step exists for the finish page. Its label is
+# recorded here so that step is a lookup rather than a re-derivation.
+FINISH_PAGE_OPTION_LABELS = {
     "START_TRAY_APP": ("Start Tray application after installation",
                        "설치 완료 후 Tray 애플리케이션 실행"),
 }
@@ -367,8 +379,8 @@ WSL_NAME_LABEL = ("WSL Name:", "WSL 이름:")
 # controls in the rich edit control, and which flavour replies depends on the
 # riched DLL loaded, not on the .wxs. So the whole family is matched.
 #
-# This cost a run: a class filter that misses is indistinguishable from a
-# control that is not there, so the driver reported "the dialog layout has
+# Keep the whole family listed. A class filter that misses is indistinguishable
+# from a control that is not there, so the driver reports "the dialog layout has
 # changed" about a field sitting in plain sight. Matched case-insensitively --
 # RichEdit 4.1 answers RICHEDIT50W in capitals.
 TEXT_FIELD_CLASSES = ("Edit", "RichEdit20W", "RichEdit20A", "RichEdit50W")

@@ -443,10 +443,25 @@ def _parse_link_info(raw: bytes, start: int) -> tuple[str | None, int]:
         return None, start + size
 
     def _cstring(at: int, wide: bool) -> str:
+        """One NUL-terminated string, BOUNDED by the end of the file.
+
+        A truncated or malformed .lnk must FAIL, never hang: `read_shortcut`
+        catches an exception and reports it, and it cannot catch a loop. The
+        ANSI branch is bounded for free -- `bytes.index` raises when there is no
+        terminator. The wide branch has to bound itself, because a slice taken
+        past the end returns b"" and b"" never equals the terminator, so the
+        obvious loop runs forever.
+        """
+        if not 0 <= at < len(raw):
+            raise ValueError(f"string offset {at} lies outside the file")
         if wide:
             end = at
-            while raw[end:end + 2] != b"\x00\x00":
+            while end + 2 <= len(raw) and raw[end:end + 2] != b"\x00\x00":
                 end += 2
+            if end + 2 > len(raw):
+                raise ValueError(
+                    "a UTF-16 string runs off the end of the file with no "
+                    "terminator")
             return raw[at:end].decode("utf-16-le", errors="replace")
         end = raw.index(b"\x00", at)
         return raw[at:end].decode("cp1252", errors="replace")
@@ -546,8 +561,18 @@ def read_tray() -> TrayState:
 
 def _mutex_exists(name: str) -> bool:
     import ctypes
+    from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # A HANDLE is POINTER-sized. ctypes defaults every function's restype to
+    # c_int, which truncates one on 64-bit Windows -- and the truncated value is
+    # then what CloseHandle is handed, so the real handle stays open for the
+    # life of the run. Declared for the same reason FindWindowW is below.
+    kernel32.OpenMutexW.restype = wintypes.HANDLE
+    kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL,
+                                    wintypes.LPCWSTR)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     handle = kernel32.OpenMutexW(_SYNCHRONIZE, False, name)
     if handle:
         kernel32.CloseHandle(handle)
@@ -562,9 +587,11 @@ def _mutex_exists(name: str) -> bool:
 
 def _tray_window_exists() -> bool:
     import ctypes
+    from ctypes import wintypes
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.FindWindowW.restype = ctypes.c_void_p
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
     return bool(user32.FindWindowW(constants.TRAY_WINDOW_CLASS,
                                    constants.TRAY_WINDOW_TITLE))
 
@@ -972,6 +999,21 @@ def snapshot(settings: dict[str, Any], *,
                         cubrid=read_cubrid(settings, registry.wsl_name,
                                            include_guest=include_guest))
 
+
+# The version of the report `MachineState.as_dict()` produces.
+#
+# INS-002 diffs its machine against a state-wizard.json that may have been
+# written by an EARLIER run, and `diff_reports` renders a key one side does not
+# have as `<absent>`. So a report written by a different version of this module
+# does not read as "no baseline available" -- it reads as a wall of INS-002
+# findings against a healthy install, which is worse than having no baseline at
+# all. `conftest._usable_reference` refuses a baseline whose run.json does not
+# carry this exact number.
+#
+# BUMP IT whenever `as_dict()` gains, loses or renames a field. The cost of
+# forgetting is one confusing run; the cost of bumping unnecessarily is one
+# wizard install.
+REPORT_SCHEMA = 1
 
 # Fields that legitimately differ between two installs of the same bundle, and
 # so must be excluded from a state-to-state diff. Keep this list SHORT and

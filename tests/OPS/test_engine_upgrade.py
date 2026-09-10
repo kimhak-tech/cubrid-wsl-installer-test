@@ -1,7 +1,8 @@
 """CUBRID Operational -- OPS-004, installing another CUBRID engine.
 
 Installs an engine build over the one the image ships, inside the distribution.
-The service stays up across the install.
+CUBRID is NOT stopped first: the engine is replaced underneath a running
+service, which is part of what this case exercises.
 
 Verifies:
 - the engine package downloads inside the distribution

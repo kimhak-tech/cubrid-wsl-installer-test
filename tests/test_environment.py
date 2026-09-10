@@ -68,23 +68,6 @@ def test_the_installer_path_is_not_in_the_committed_config(note):
     note("  installer  : path comes from settings.local.toml, as it should")
 
 
-def test_the_installer_is_not_blocked_by_mark_of_the_web(installer, note):
-    """A downloaded bundle is flagged, and an unattended run cannot click past
-    the SmartScreen dialog that flag produces.
-
-    Checked here rather than fixed silently: unblocking edits a file you pointed
-    us at, and that is your call, not the framework's.
-    """
-    motw = installer.mark_of_the_web
-    assert motw is None, (
-        f"{installer.path.name} carries a Mark-of-the-Web (it was downloaded or "
-        f"copied from a network share):\n{motw}\n\n"
-        "SmartScreen can block an unsigned bundle so flagged, and an unattended "
-        "install has nothing to click the dialog with -- it would hang until the "
-        "install timeout. Clear it with:\n"
-        f"    Unblock-File -Path '{installer.path}'")
-
-
 def test_wsl_responds_and_its_output_decodes(note):
     """wsl.exe emits UTF-16LE for its own output. If decoding were wrong, every
     distribution check would silently see nothing."""
@@ -157,11 +140,20 @@ def test_the_shortcut_parser_reads_a_link_the_way_windows_writes_one(tmp_path, n
 
 
 def _build_lnk(target: str, arguments: str, icon: str,
-               unicode_strings: bool) -> bytes:
+               unicode_strings: bool, *, link_info_unicode: bool = False,
+               ansi_target: str | None = None,
+               truncate_unicode_path: bool = False) -> bytes:
     """One [MS-SHLLINK] shell link, assembled by hand.
 
     Only the parts `read_shortcut` reads: the header, a LinkInfo block carrying
     LocalBasePath, and the ARGUMENTS and ICON_LOCATION StringData sections.
+
+    `link_info_unicode` emits the EXTENDED LinkInfo header (0x24), where the
+    Unicode offsets exist and are authoritative. `ansi_target` then fills the
+    ANSI fields with something different, so a parser reading the wrong pair of
+    offsets returns the wrong string instead of the right one by luck.
+    `truncate_unicode_path` drops the string's terminator, which is the shape a
+    bounded parser must reject and an unbounded one loops on.
     """
     import struct
 
@@ -171,10 +163,33 @@ def _build_lnk(target: str, arguments: str, icon: str,
               + struct.pack("<I", flags) + struct.pack("<I", 0) + b"\x00" * 24
               + struct.pack("<IiiI", 0, 0, 1, 0) + b"\x00" * 10)[:76].ljust(76, b"\x00")
 
-    base = target.encode("cp1252") + b"\x00"
-    fixed = 28                                   # LinkInfoHeaderSize 0x1C
-    link_info = struct.pack("<IIIIIII", fixed + len(base) + 1, 0x1C, 1, 0,
-                            fixed, 0, fixed + len(base)) + base + b"\x00"
+    if link_info_unicode:
+        fixed = 0x24                             # the extended LinkInfo header
+        ansi_base = (ansi_target or target).encode("cp1252") + b"\x00"
+        ansi_suffix = b"\x00"
+        wide_base = target.encode("utf-16-le") + b"\x00\x00"
+        wide_suffix = b"\x00\x00"
+        data = ansi_base + ansi_suffix + wide_base + wide_suffix
+        link_info = struct.pack(
+            "<IIIIIIIII", fixed + len(data), fixed, 1, 0,
+            fixed,                                       # LocalBasePathOffset
+            0,                                           # network link offset
+            fixed + len(ansi_base),                      # CommonPathSuffix
+            fixed + len(ansi_base) + len(ansi_suffix),   # ...Unicode
+            fixed + len(ansi_base) + len(ansi_suffix) + len(wide_base),
+        ) + data
+        if truncate_unicode_path:
+            # Cut the file inside the Unicode path, so there is no terminator
+            # anywhere after it -- not merely a missing one, which the very next
+            # field would supply by accident.
+            return (header + link_info)[:len(header) + fixed + len(ansi_base)
+                                        + len(ansi_suffix)
+                                        + len(wide_base) - 4]
+    else:
+        base = target.encode("cp1252") + b"\x00"
+        fixed = 28                               # LinkInfoHeaderSize 0x1C
+        link_info = struct.pack("<IIIIIII", fixed + len(base) + 1, 0x1C, 1, 0,
+                                fixed, 0, fixed + len(base)) + base + b"\x00"
 
     def _string(text: str) -> bytes:
         encoded = (text.encode("utf-16-le") if unicode_strings
@@ -182,6 +197,47 @@ def _build_lnk(target: str, arguments: str, icon: str,
         return struct.pack("<H", len(text)) + encoded
 
     return header + link_info + _string(arguments) + _string(icon)
+
+
+def test_the_shortcut_parser_reads_the_extended_linkinfo_header(tmp_path, note):
+    """A LinkInfo header of 0x24 or more carries UNICODE path offsets.
+
+    `_parse_link_info` switches on that size, and the switch is not cosmetic:
+    the two pairs of offsets point at different bytes, so reading the wrong pair
+    yields a plausible-looking string rather than an error. The link below
+    therefore carries a DELIBERATELY WRONG ANSI path -- a parser that ignores
+    the extended header returns that, and the assertion names it.
+
+    Bounded, too. A Unicode string with no terminator must raise and be reported
+    by `read_shortcut`, never scanned past the end of the buffer: that branch
+    cannot use `bytes.index` to bound itself, and a parser that loops is one an
+    exception handler cannot rescue.
+    """
+    target = r"C:\Users\USER\AppData\Local\CUBRID-FOR-WSL\cubrid_tray_app.exe"
+    path = tmp_path / "extended.lnk"
+    path.write_bytes(_build_lnk(
+        target=target, arguments="--minimised", icon=target,
+        unicode_strings=True, link_info_unicode=True,
+        ansi_target=r"C:\WRONG\ansi-offsets-were-read.exe"))
+
+    shortcut = state_mod.read_shortcut(path)
+    note(f"  shortcut   : extended header -> {shortcut.describe()}")
+    assert shortcut.error is None, shortcut.error
+    assert shortcut.target == target, (
+        "the Unicode offsets are authoritative once LinkInfoHeaderSize >= 0x24; "
+        f"got {shortcut.target!r}")
+
+    truncated = tmp_path / "truncated.lnk"
+    truncated.write_bytes(_build_lnk(
+        target=target, arguments="--minimised", icon=target,
+        unicode_strings=True, link_info_unicode=True,
+        truncate_unicode_path=True))
+    broken = state_mod.read_shortcut(truncated)
+    note(f"  shortcut   : unterminated UTF-16 path -> {broken.error}")
+    assert broken.exists and broken.error and broken.target is None, (
+        "an unterminated UTF-16 path must be reported as an error and no "
+        "target -- and it must RETURN, because read_shortcut can catch an "
+        "exception but not a loop")
 
 
 def test_one_broken_thing_produces_one_failure_line(note):

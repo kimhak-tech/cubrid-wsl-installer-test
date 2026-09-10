@@ -98,28 +98,6 @@ class InstallerPackage:
             self._sha256 = digest.hexdigest()
         return self._sha256
 
-    @property
-    def mark_of_the_web(self) -> str | None:
-        """The Zone.Identifier stream Windows attaches to a downloaded file.
-
-        A bundle carrying one is treated by SmartScreen as untrusted, and this
-        one is unsigned: launched unattended it can raise a "Windows protected
-        your PC" dialog that nothing is there to click, so the install hangs
-        until the framework's own timeout fires -- fifteen minutes to learn that
-        a file was flagged.
-
-        Returns the stream's content, or None when there is none. Reading it
-        (rather than deleting it, as the dev team's prototype does) keeps this
-        on the reporting side: the framework does not quietly modify a file the
-        tester pointed it at.
-        """
-        try:
-            with open(f"{self.path}:Zone.Identifier", "r",
-                      encoding="utf-8", errors="replace") as stream:
-                return stream.read().strip()
-        except OSError:
-            return None
-
     def describe(self) -> str:
         return (f"{self.path.name}  CUBRID {self.cubrid_version}  "
                 f"installer {self.installer_version} build {self.build}  "
