@@ -142,7 +142,9 @@ def find_window(titles: list[str], *, timeout: float = 120, interval: float = 0.
         + ("\n".join(f"  {t!r} [{c}]" for t, c in sorted(seen.items())) or "  (none)"))
 
 
-def assert_no_setup_window(titles: list[str]) -> None:
+def assert_no_setup_window(titles: list[str], *, timeout: float = 60.0,
+                           interval: float = 1.0,
+                           note: Callable[[str], None] | None = None) -> None:
     """Refuse to start while a setup window from an earlier run is still open.
 
     Discovery matches on title, so a leftover bundle window is indistinguishable
@@ -150,17 +152,39 @@ def assert_no_setup_window(titles: list[str]) -> None:
     corpse of the previous run and click its buttons. A failed wizard run leaves
     exactly that behind.
 
-    Deliberately refuses instead of closing it: something the framework did not
-    open may be mid-operation, and an installer killed mid-operation is how a
-    machine ends up half-installed.
+    It WAITS first, rather than refusing on the first look. The window this most
+    often catches is not a human's: `reset.ensure_clean` runs an uninstall
+    immediately before this, and Burn's process can return while its own window
+    is still closing. Refusing instantly turned that race into a failed run --
+    the suite tripping over its own cleanup. (The uninstall is now /quiet and
+    draws no window at all, so this wait is the second line of defence rather
+    than the first.)
+
+    After the timeout it still REFUSES rather than closing anything: something
+    the framework did not open may be mid-operation, and an installer killed
+    mid-operation is how a machine ends up half-installed.
     """
+    say = note or (lambda _text: None)
     patterns = [re.compile(f".*{re.escape(t)}.*") for t in titles]
-    stale = [(h, t) for h, t, _c in _enumerate_windows()
-             if t and any(rx.search(t) for rx in patterns)]
+
+    def _stale() -> list[tuple[int, str]]:
+        return [(h, t) for h, t, _c in _enumerate_windows()
+                if t and any(rx.search(t) for rx in patterns)]
+
+    deadline = time.time() + timeout
+    stale = _stale()
+    if stale:
+        say(f"    wizard   : a setup window is open ({stale[0][1]!r}); waiting "
+            f"up to {timeout:.0f}s for it to close")
+    while stale and time.time() < deadline:
+        time.sleep(interval)
+        stale = _stale()
+
     if stale:
         raise WizardError(
             "a CUBRID setup window is already open, so this run cannot tell it "
-            "apart from the one it is about to start:\n"
+            f"apart from the one it is about to start (still there after "
+            f"{timeout:.0f}s):\n"
             + "\n".join(f"  hwnd={h} {t!r}" for h, t in stale)
             + "\n\nClose it by hand and re-run.")
 
@@ -306,7 +330,17 @@ def _matching_controls(win, title_re: str, kinds: tuple[str, ...], *,
 
 
 def _describe_controls(win) -> str:
-    """Every control on the page, for a failure that has to be diagnosed once."""
+    """Every control on the page, for a failure that has to be diagnosed once.
+
+    Carries the control ID and the row centre as well as the text, because the
+    failure this appears in is almost always a PAIRING failure -- the option
+    checkboxes have no accessible name (constants.OPTION_LABELS), so they are
+    found by the label sharing their row. Diagnosing one means seeing which
+    rows the controls actually sit on; and if the IDs turn out stable and
+    distinct, matching on ID replaces the row pairing altogether. Both are read
+    off this dump, so the failure answers the question instead of prompting a
+    second run to ask it.
+    """
     try:
         rows = []
         for control in win.children():
@@ -317,9 +351,19 @@ def _describe_controls(win) -> str:
                     shown += ",disabled"
             except Exception:
                 shown = "?"
+            try:
+                rect = control.rectangle()
+                where = f"row={(rect.top + rect.bottom) // 2} x={rect.left}"
+            except Exception:
+                where = "row=?"
+            try:
+                identifier = f"id={control.control_id()}"
+            except Exception:
+                identifier = "id=?"
             rows.append(f"  {control.window_text()!r} "
                         f"[class={getattr(info, 'class_name', '?')} "
-                        f"type={getattr(info, 'control_type', '?')} {shown}]")
+                        f"type={getattr(info, 'control_type', '?')} "
+                        f"{identifier} {where} {shown}]")
         return ("Controls in this window (HIDDEN ones belong to other pages of "
                 "the same window):\n" + ("\n".join(rows) or "  (none)"))
     except Exception as exc:
@@ -361,7 +405,7 @@ def click_button(win, labels: list[str], *, timeout: float = 30,
     disabled = [c for c in _matching_controls(win, title_re, ("Button", "CheckBox"),
                                               require_enabled=False)]
     if disabled:
-        last = (f"the button exists but is disabled: "
+        last = ("the button exists but is disabled: "
                 + ", ".join(repr(c.window_text()) for c in disabled))
     raise WizardError(f"could not click any of {labels} within {timeout:.0f}s. "
                       f"Last: {last}.\n" + _describe_controls(win))
@@ -487,80 +531,250 @@ def _is_completion_dialog(window: Window) -> bool:
                                    require_enabled=False))
 
 
-def _assert_defaults_only(options: dict[str, Any]) -> None:
-    """Refuse options this driver cannot actually honour.
-
-    The driver advances on whatever the wizard offers. If the caller asked for
-    non-default options and we clicked Next past them, the install would succeed
-    and the comparison would fail with a misleading message about the product.
-    """
-    differing = {k: v for k, v in options.items()
-                 if k in constants.INSTALL_OPTIONS
-                 and str(constants.INSTALL_OPTIONS[k]) != str(v)}
-    if differing:
-        raise WizardError(
-            f"the wizard driver drives DEFAULTS ONLY, but was asked for "
-            f"{differing}. See _find_option_checkboxes() for how to add it.")
-
-
-def _find_option_checkboxes(win) -> list:
-    """The Installation Options checkboxes, ordered as they appear on screen.
-
-    NOT USED on the default path, and kept because it is the answer to "how do I
-    drive the options?" -- the technique is from the dev team's prototype and is
-    not obvious.
-
-    The product declares these checkboxes with `Text=" "`, so they carry no
-    label and no accessible name: they cannot be found by title, and on the
-    win32 backend a checkbox and a push button are both class `Button`, so
-    "the Buttons on this page" also matches Back, Next and Cancel. What
-    separates them is that the option checkboxes are the only Buttons with
-    EMPTY text. Sorting those by screen position (top, then left) gives them in
-    the order the dialog lists them, and that order is the only thing tying a
-    checkbox to an option.
-
-    The completion page uses the same trick with exactly one box: its single
-    empty-text Button is START_TRAY_APP. Note where that leaves the option --
-    the wizard expresses START_TRAY_APP on the FINISH page, not on the options
-    page, so a wizard-driven scenario that changes it must act after the install
-    has already run.
-
-    Order-by-position is positional coupling: if the product reorders the
-    dialog, this silently drives the wrong option. Any case built on it should
-    assert the resulting state rather than trust the click.
-    """
-    boxes = []
+def _controls(win) -> list:
+    """Every direct child control, with the ones that raise on inspection
+    dropped rather than aborting the search."""
+    out = []
     for control in win.children():
         try:
-            info = control.element_info
-            if (getattr(info, "class_name", "") or "") != "Button":
-                continue
-            if (control.window_text() or "").strip():
-                continue
-            rect = control.rectangle()
-            boxes.append((rect.top, rect.left, control))
+            control.rectangle()
+            out.append(control)
         except Exception:
             continue
-    boxes.sort(key=lambda item: (item[0], item[1]))
-    return [control for _top, _left, control in boxes]
+    return out
 
 
-def install(package: config_mod.InstallerPackage, options: dict[str, Any],
-            log_path: Path, *, timeout: int, step_timeout: float = 120,
-            note: Callable[[str], None] | None = None) -> WizardResult:
-    """Drive a default installation through the real wizard."""
+def _class_of(control) -> str:
+    return (getattr(control.element_info, "class_name", "") or "")
+
+
+def _text_of(control) -> str:
+    try:
+        return (control.window_text() or "").strip()
+    except Exception:
+        return ""
+
+
+def _find_labelled_control(win, labels: tuple[str, ...], kinds: tuple[str, ...],
+                           *, side: str = "right"):
+    """The control sitting on the same ROW as a label, on the given side.
+
+    This is the answer to the product's unlabelled controls (see
+    constants.OPTION_LABELS). A checkbox declared `Text=" "` has no accessible
+    name, but the Text control carrying its caption shares its Y -- so find the
+    LABEL by its text, then take the control beside it.
+
+    `side` is "left" for the option checkboxes (X=25, label at X=40) and
+    "right" for the WSL-name edit (label at X=25, field at X=75).
+
+    Raises rather than guessing. A pairing that cannot be made confidently is
+    the one case where a silent fallback is unacceptable: the driver would tick
+    SOMETHING, the install would succeed, and the comparison would then report
+    a product defect that is really a driver defect.
+    """
+    wanted = {label.casefold() for label in labels}
+    kinds_wanted = {kind.casefold() for kind in kinds}
+    label_control = next(
+        (c for c in _controls(win)
+         if _class_of(c) == "Static" and _text_of(c).casefold() in wanted), None)
+    if label_control is None:
+        raise WizardError(
+            f"no label matching {labels} on this page. The option controls are "
+            "found through their labels because the product gives them no "
+            "accessible name; a renamed or re-localised label breaks that, and "
+            "it must break loudly.\n" + _describe_controls(win))
+
+    label_rect = label_control.rectangle()
+    row = (label_rect.top + label_rect.bottom) / 2
+    label_centre = (label_rect.left + label_rect.right) / 2
+
+    candidates = []
+    for control in _controls(win):
+        if (control is label_control
+                or _class_of(control).casefold() not in kinds_wanted):
+            continue
+        rect = control.rectangle()
+        if abs((rect.top + rect.bottom) / 2 - row) > constants.OPTION_ROW_TOLERANCE_PX:
+            continue
+        # Compared by CENTRE, not by facing edges. The WSL-name label is
+        # declared X=25 W=50 and its field X=75, so their edges are exactly
+        # flush -- an edge test decides that pairing on one pixel of rounding
+        # and drops the only candidate when it rounds the wrong way. Centres
+        # are 167px apart on the same dialog, so the answer cannot depend on
+        # rounding. The same holds for a checkbox left of its caption.
+        centre = (rect.left + rect.right) / 2
+        if side == "left" and centre > label_centre:
+            continue
+        if side == "right" and centre < label_centre:
+            continue
+        candidates.append((abs(centre - label_centre), control))
+
+    if not candidates:
+        raise WizardError(
+            f"found the label {labels[0]!r} but no {kinds} control on its row "
+            f"to the {side}. The dialog layout has changed.\n"
+            + _describe_controls(win))
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def option_checkbox(win, option: str):
+    """The checkbox for one bundle variable, found through its label."""
+    try:
+        labels = constants.OPTION_LABELS[option]
+    except KeyError:
+        raise WizardError(
+            f"{option!r} has no label in constants.OPTION_LABELS, so the wizard "
+            "cannot find its checkbox. Options the wizard cannot drive must be "
+            "refused, never silently skipped.") from None
+    # A checkbox and a push button are both class "Button" on the win32 backend,
+    # and the option boxes are the ones with EMPTY text -- which is also what
+    # makes them unfindable by name in the first place.
+    return _find_labelled_control(win, labels, ("Button",), side="left")
+
+
+def set_option(win, option: str, want: bool, *, settle: float = 5,
+               note: Callable[[str], None] | None = None) -> str:
+    """Put one option checkbox into the wanted state, and confirm it took.
+
+    Clicked with the REAL mouse (`click_input`), not with a posted message.
+    `click()` posts WM_LBUTTONDOWN/UP straight to the control, and the MSI
+    dialog does not toggle for it: an MSI CheckBox is not a self-toggling
+    BS_AUTOCHECKBOX -- the state lives in the MSI property, and MSI's own dialog
+    procedure is what flips it when it sees the click go through the message
+    loop. A posted click is therefore READ and does nothing, which the read-back
+    below reports as "the click did not take". This is the same input the
+    licence checkbox takes.
+
+    Then POLLED, not read once. Real input is asynchronous -- SendInput returns
+    before the dialog has processed anything -- so an immediate read is a race
+    the driver loses at random.
+
+    The read-back itself is the point of this function. A click that lands on a
+    disabled or obscured control changes nothing, and an unverified click is
+    exactly how a scenario ends up asserting the defaults it thought it had
+    changed.
+    """
     say = note or (lambda _text: None)
-    preflight.require_elevation(preflight.WIZARD_REASON)
-    _assert_defaults_only(options)
+    box = option_checkbox(win, option)
+    before = _is_checked(box)
+    if before == want:
+        say(f"    wizard   : {option} already {'on' if want else 'off'}")
+        return f"{option}={int(want)} (unchanged)"
 
-    strings = constants.ui_strings
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    result = WizardResult(action="wizard-install", duration_seconds=0.0,
-                          log_path=log_path)
-    process: subprocess.Popen | None = None
-    started = time.monotonic()
-    deadline = started + timeout
+    box.click_input()
+    deadline = time.time() + settle
+    after = before
+    while True:
+        after = _is_checked(box)
+        if after == want or time.time() >= deadline:
+            break
+        time.sleep(0.1)
 
+    if after != want:
+        try:
+            enabled = box.is_enabled()
+        except Exception:
+            enabled = "?"
+        rect = box.rectangle()
+        raise WizardError(
+            f"clicked the {option} checkbox but after {settle:.0f}s it still "
+            f"reads {'on' if after else 'off'}, not {'on' if want else 'off'}. "
+            f"The click did not take. The control is at {rect} and reports "
+            f"enabled={enabled}; if it is enabled and in view, the click is "
+            "reaching the wrong window -- check that no other window took the "
+            "foreground while the wizard was being driven.")
+    say(f"    wizard   : {option} {'on' if before else 'off'} -> "
+        f"{'on' if want else 'off'}")
+    return f"{option}={int(want)}"
+
+
+def type_into(field, value: str, *, settle: float = 5,
+              matches: Callable[[str], bool] | None = None) -> str:
+    """Clear a field, type `value` into it, and POLL until it reads back.
+
+    Typed with the keyboard rather than set with WM_SETTEXT. MSI reads a
+    control's value through its own notifications, and a silently-set field can
+    leave the underlying property untouched -- the install then succeeds with
+    the DEFAULT value and every assertion about the custom one fails, blaming
+    the product.
+
+    POLLED, not read once. Typing is real input and SendInput returns before the
+    dialog's message loop has caught up, so an immediate read is a race the
+    driver loses at random -- a few runs in ten, which is the worst kind. Every
+    caller goes through here for that reason; a second read-back written inline
+    is a second one free to forget it.
+
+    Returns the LAST text read, whether or not it matched, so the caller raises
+    with the value the dialog actually holds. `matches` overrides the comparison
+    for a field the dialog normalises as you type -- the directory field appends
+    a trailing separator.
+    """
+    accept = matches or (lambda written: written == value)
+    field.click_input()
+    field.type_keys("^a{DEL}", set_foreground=False)
+    field.type_keys(value, with_spaces=True, set_foreground=False)
+
+    deadline = time.time() + settle
+    while True:
+        written = _text_of(field)
+        if accept(written) or time.time() >= deadline:
+            return written
+        time.sleep(0.1)
+
+
+def set_text_field(win, labels: tuple[str, ...], value: str, *,
+                   kinds: tuple[str, ...] = constants.TEXT_FIELD_CLASSES,
+                   side: str = "right", settle: float = 5,
+                   note: Callable[[str], None] | None = None) -> str:
+    """Type a value into the field beside a label, and read it back.
+
+    The pairing is the part that is specific to this function: the option and
+    name controls carry no accessible name, so they are reached through the
+    label on their row. The typing and the polled read-back are `type_into`.
+    """
+    say = note or (lambda _text: None)
+    field = _find_labelled_control(win, labels, kinds, side=side)
+    written = type_into(field, value, settle=settle)
+    if written != value:
+        raise WizardError(
+            f"typed {value!r} into the field beside {labels[0]!r} but after "
+            f"{settle:.0f}s it reads {written!r}.")
+    say(f"    wizard   : {labels[0]} <- {value!r}")
+    return f"{labels[0]}={value!r}"
+
+
+def _unsupported_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Options that differ from the defaults AND the wizard cannot drive.
+
+    The guarantee this exists to keep: a scenario is either DRIVEN or REJECTED,
+    never quietly ignored. So the test is membership of
+    `constants.OPTION_LABELS`, which is exactly the set `_options` below walks
+    -- the two read the same dict, so an option cannot be accepted here and then
+    left untouched there.
+
+    START_TRAY_APP is the one that makes this worth stating. It has a label, but
+    it lives on CustomFinishDlg rather than InstallOptionsDlg and no step drives
+    that page, so it is deliberately NOT in OPTION_LABELS and lands here instead
+    -- see constants.FINISH_PAGE_OPTION_LABELS.
+    """
+    return {key: value for key, value in options.items()
+            if key in constants.INSTALL_OPTIONS
+            and str(constants.INSTALL_OPTIONS[key]) != str(value)
+            and key not in constants.OPTION_LABELS
+            and key != "CUB_DEFAULT_WSL_NAME"}
+
+
+def _stepper(result: WizardResult, deadline: float, step_timeout: float,
+             say: Callable[[str], None]):
+    """The walk machinery both wizard paths share: find a page, act on it, record it.
+
+    Shared rather than copied because the two paths differ ONLY in which pages
+    they visit. A second copy would be free to drift on the parts that are not
+    about the scenario at all -- the deadline, the blocking-dialog guard, the
+    step record -- and drift there is invisible: both copies keep working while
+    only one of them still checks for a modal dialog.
+    """
     def guard() -> None:
         """Checked on every poll of every wait -- see check_for_blocking_dialog."""
         check_for_blocking_dialog(say)
@@ -579,30 +793,150 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
                                        str(performed), elapsed))
         say(f"    wizard   : {name:<18} {window.title!r} -> {performed} ({elapsed:.0f}s)")
 
+    return step
+
+
+def _walk_to_install_options(step, strings) -> None:
+    """Bundle welcome, Welcome, License, Environment Check -- then stop.
+
+    Every wizard path crosses these four pages identically and diverges only at
+    InstallOptionsDlg, which is the page each scenario is actually about. Copied
+    into each path they would drift on the parts that are not about the scenario
+    at all: a renamed licence checkbox would be fixed where someone happened to
+    hit it and stay broken in the other walk, which fails as "the licence page
+    did not appear" rather than as what it is.
+    """
+    step("bundle-welcome", strings("bundle_title"),
+         lambda w: click_button(w, strings("bundle_btn_install")))
+    step("welcome", strings("welcome_title"),
+         lambda w: click_button(w, strings("btn_next")))
+
+    def _license(win):
+        ticked = tick_checkbox(win, strings("license_accept"))
+        return f"licence {ticked} + " + click_button(win, strings("btn_next"))
+    step("license", strings("license_title"), _license)
+
+    step("environment-check", strings("envcheck_title"),
+         lambda w: click_button(w, strings("btn_next")))
+
+
+def _record_bundle_process(result: WizardResult,
+                           process: subprocess.Popen | None) -> None:
+    """Note how the bundle process ended, without waiting for it or killing it.
+
+    Recorded rather than acted on, deliberately: a bundle still running after a
+    walk that has finished is itself the finding, and killing an installer
+    mid-operation is how a machine ends up half-installed.
+    """
+    if process is None:
+        return
+    result.returncode = process.poll()
+    if result.returncode is None and not result.ok:
+        result.error = (f"{result.error}; the bundle process (pid "
+                        f"{process.pid}) is still running")
+
+
+def install(package: config_mod.InstallerPackage, options: dict[str, Any],
+            log_path: Path, *, timeout: int, step_timeout: float = 120,
+            install_dir: str | None = None,
+            note: Callable[[str], None] | None = None) -> WizardResult:
+    """Drive an installation through the real wizard.
+
+    `options` are the bundle variables to SET on InstallOptionsDlg. Any that
+    already match the shipping defaults are left alone -- the driver reads each
+    checkbox before clicking it, so passing the defaults is a no-op rather than
+    a double toggle.
+
+    `install_dir` is wizard-only, and deliberately so: `ActionUpdateInstallFolder`
+    overwrites INSTALLFOLDER whenever UILevel < 5, so a directory passed on a
+    silent command line is discarded. The wizard is the only way to set it.
+
+    START_TRAY_APP is NOT settable here. It lives on CustomFinishDlg, which no
+    step drives, so it is absent from `constants.OPTION_LABELS` and a scenario
+    asking for a non-default value is REFUSED below rather than accepted and
+    ignored.
+    """
+    say = note or (lambda _text: None)
+    preflight.require_elevation(preflight.WIZARD_REASON)
+    unsupported = _unsupported_options(options)
+    if unsupported:
+        raise WizardError(
+            f"the wizard driver cannot set {unsupported}. Every option it can "
+            "drive has an entry in constants.OPTION_LABELS; anything else is "
+            "refused rather than silently left at its default, which would "
+            "report a success the run did not achieve.")
+
+    strings = constants.ui_strings
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = WizardResult(action="wizard-install", duration_seconds=0.0,
+                          log_path=log_path)
+    process: subprocess.Popen | None = None
+    started = time.monotonic()
+    deadline = started + timeout
+
+    step = _stepper(result, deadline, step_timeout, say)
+
     try:
-        assert_no_setup_window(strings("bundle_title"))
+        assert_no_setup_window(strings("bundle_title"), note=say)
 
         # Burn draws its own UI here, so there is no /passive -- but its log is
         # Disable="yes" in the bundle, so /log is still required to diagnose a
         # failure. Same as the silent driver.
         process = subprocess.Popen([str(package.path), "/log", str(log_path)])
 
-        step("bundle-welcome", strings("bundle_title"),
-             lambda w: click_button(w, strings("bundle_btn_install")))
-        step("welcome", strings("welcome_title"),
-             lambda w: click_button(w, strings("btn_next")))
+        _walk_to_install_options(step, strings)
 
-        def _license(win):
-            ticked = tick_checkbox(win, strings("license_accept"))
-            return f"licence {ticked} + " + click_button(win, strings("btn_next"))
-        step("license", strings("license_title"), _license)
+        def _options(win):
+            """Set every option on InstallOptionsDlg, then advance.
 
-        step("environment-check", strings("envcheck_title"),
-             lambda w: click_button(w, strings("btn_next")))
-        step("install-options", strings("options_title"),
-             lambda w: click_button(w, strings("btn_next")))
-        step("install-directory", strings("installdir_title"),
-             lambda w: click_button(w, strings("btn_next")))
+            The name field first: it is the one control whose value another
+            page derives from, and typing into it after ticking boxes would
+            re-read a dialog that has already moved on.
+            """
+            performed = []
+            wanted_name = str(options.get("CUB_DEFAULT_WSL_NAME", ""))
+            if wanted_name and wanted_name != constants.INSTALL_OPTIONS[
+                    "CUB_DEFAULT_WSL_NAME"]:
+                performed.append(set_text_field(
+                    win, constants.WSL_NAME_LABEL, wanted_name, note=say))
+            # Driven off OPTION_LABELS, not a list repeated here: that dict is
+            # also what `_unsupported_options` accepts, so a second list is a
+            # list that can accept an option this loop never touches.
+            for option in constants.OPTION_LABELS:
+                if option in options:
+                    performed.append(set_option(
+                        win, option, bool(int(options[option])), note=say))
+            performed.append(click_button(win, strings("btn_next")))
+            return " + ".join(performed)
+
+        step("install-options", strings("options_title"), _options)
+
+        def _directory(win):
+            if install_dir is None:
+                return click_button(win, strings("btn_next"))
+            # The PathEdit is the only text field on this page, and its label
+            # sits on the row ABOVE it rather than beside it -- so it is matched
+            # by kind within the page, not by row.
+            wanted = {kind.casefold() for kind in constants.TEXT_FIELD_CLASSES}
+            field = next((c for c in _controls(win)
+                          if _class_of(c).casefold() in wanted), None)
+            if field is None:
+                raise WizardError("no directory field on the installation "
+                                  "directory page.\n" + _describe_controls(win))
+            # Compared with the trailing separator stripped: the dialog
+            # appends one to a directory it recognises.
+            written = type_into(
+                field, install_dir,
+                matches=lambda text: (text.rstrip("\\")
+                                      == install_dir.rstrip("\\")))
+            if written.rstrip("\\") != install_dir.rstrip("\\"):
+                raise WizardError(f"typed {install_dir!r} into the directory "
+                                  f"field but it reads {written!r}")
+            say(f"    wizard   : install directory <- {install_dir!r}")
+            return (f"dir={install_dir!r} + "
+                    + click_button(win, strings("btn_next")))
+
+        step("install-directory", strings("installdir_title"), _directory)
         step("verify-ready", strings("verifyready_title"),
              lambda w: click_button(w, strings("btn_install")))
 
@@ -624,14 +958,100 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
 
-    if process is not None:
-        # Recorded rather than waited on, deliberately: a bundle still running
-        # after a failed run is itself a finding, and killing an installer
-        # mid-operation is how a machine ends up half-installed.
-        result.returncode = process.poll()
-        if result.returncode is None and not result.ok:
-            result.error = (f"{result.error}; the bundle process (pid "
-                            f"{process.pid}) is still running")
+    _record_bundle_process(result, process)
+    result.duration_seconds = time.monotonic() - started
+    return result
 
+
+# How long to wait for whatever Burn draws after a cancelled MSI. Short on
+# purpose: the product does not specify that there IS such a page, so this is a
+# budget for tidying up, not for a step the run depends on.
+CANCEL_CLOSE_WAIT = 20.0
+
+
+def cancel(package: config_mod.InstallerPackage, log_path: Path, *,
+           timeout: int, step_timeout: float = 120,
+           note: Callable[[str], None] | None = None) -> WizardResult:
+    """Drive the wizard partway, then cancel it.
+
+    Stops on the installation-directory page -- the last one before Ready to
+    Install, and the furthest the wizard goes without entering
+    InstallExecuteSequence. It is also PAST the Next that fires
+    ActionUpdateInstallFolder and ActionCheckWslName, so the machine has had
+    custom actions run against it before the cancel. Cancelling on the Welcome
+    page would be a cheaper walk proving less.
+
+    The confirmation is three windows, and the last two share a title:
+
+        Cancel -> CustomCancelDlg ("Cancel Installation") -> Yes -> CustomUserExit
+
+    CustomUserExit is declared Title="[ProductName] Setup", the same string the
+    bundle window carries, so it is accepted only as an MSI dialog holding a
+    Finish button -- the same test the completion page gets.
+
+    Like every driver here this one only DRIVES. Whether the machine is clean
+    afterwards is the case's question, and reset.residue_now answers it.
+    """
+    say = note or (lambda _text: None)
+    preflight.require_elevation(preflight.WIZARD_REASON)
+
+    strings = constants.ui_strings
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = WizardResult(action="wizard-cancel", duration_seconds=0.0,
+                          log_path=log_path)
+    process: subprocess.Popen | None = None
+    started = time.monotonic()
+    step = _stepper(result, started + timeout, step_timeout, say)
+
+    try:
+        assert_no_setup_window(strings("bundle_title"), note=say)
+        process = subprocess.Popen([str(package.path), "/log", str(log_path)])
+
+        _walk_to_install_options(step, strings)
+
+        # Every option left at its default. What is under test is the cancel,
+        # and a scenario that also changed options could not say which of the
+        # two the machine's state was answering.
+        step("install-options", strings("options_title"),
+             lambda w: click_button(w, strings("btn_next")))
+
+        step("install-directory", strings("installdir_title"),
+             lambda w: click_button(w, strings("btn_cancel")))
+        step("cancel-confirm", strings("cancel_title"),
+             lambda w: click_button(w, strings("btn_yes")))
+        step("user-exit", strings("bundle_title"),
+             lambda w: click_button(w, strings("btn_finish")),
+             accept=_is_completion_dialog)
+
+        # What Burn draws once the MSI reports a user cancel is not specified by
+        # the product, so not finding it is not a failure of this run. A window
+        # LEFT OPEN is a failure of the next one, though -- assert_no_setup_window
+        # refuses to start the wizard while any window carries that title -- so
+        # it is attempted on a short budget and recorded either way.
+        #
+        # MSI dialogs are rejected by class. CustomUserExit carries this same
+        # title and does not close the instant its Finish is clicked, so without
+        # this the walk can catch the dialog on its way out, fail to find a
+        # Close button on it, and record "nothing to close" while the bundle
+        # window it never looked at is still open -- breaking the NEXT run.
+        try:
+            step("bundle-close", strings("bundle_title"),
+                 lambda w: click_button(w, strings("bundle_btn_close")),
+                 wait=CANCEL_CLOSE_WAIT,
+                 accept=lambda window: not (window.class_name or "").startswith(
+                     constants.MSI_DIALOG_CLASS_PREFIX))
+        except (TimeoutError, WizardError) as exc:
+            result.steps.append(StepRecord(
+                "bundle-close", "", "-",
+                f"no bundle page to close ({type(exc).__name__})", 0.0))
+            say(f"    wizard   : {'bundle-close':<18} not shown; nothing left open")
+
+    except TimeoutError as exc:
+        result.timed_out = True
+        result.error = str(exc)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+
+    _record_bundle_process(result, process)
     result.duration_seconds = time.monotonic() - started
     return result

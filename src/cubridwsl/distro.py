@@ -51,6 +51,26 @@ class CommandResult:
     def ok(self) -> bool:
         return self.returncode == 0
 
+    def describe(self) -> str:
+        """One line: how it exited and what it said.
+
+        The same `describe()` contract `silent.RunResult` and
+        `wizard.WizardResult` carry, so a caller recording evidence does not
+        have to know which kind of result it is holding.
+        """
+        detail = (self.stdout or self.stderr).strip().replace("\n", " | ")
+        return f"rc={self.returncode} {detail[:400]}"
+
+    def as_dict(self) -> dict:
+        """The WHOLE invocation, for the run report.
+
+        `describe()` truncates because it is one line in a terminal; this must
+        not -- a command's full output is often the only way to tell a product
+        failure from a framework one after the run is over.
+        """
+        return {"command": self.command, "returncode": self.returncode,
+                "ok": self.ok, "stdout": self.stdout, "stderr": self.stderr}
+
 
 def _environment() -> dict[str, str]:
     """WSL_UTF8=1 makes wsl.exe emit its OWN messages as UTF-8 instead of
@@ -159,6 +179,14 @@ def run(name: str, command: str, *, user: str | None = None,
 
     stdin is redirected from /dev/null because a guest command that blocks on
     input otherwise hangs to the timeout with no diagnostic.
+
+    **THAT REDIRECT IS APPENDED TO THE WHOLE STRING, so on a PIPELINE it binds
+    to the LAST command and silently overrides the pipe.** `yes y | ./installer`
+    becomes `yes y | ./installer </dev/null`, the installer reads EOF, and the
+    failure looks exactly like the piped answers being wrong. A command that
+    must receive input on stdin has to protect it -- `{ yes y | ./installer; }`,
+    where the group takes the redirect and the pipe inside still wins. See
+    `cubrid_cli.install_engine`.
     """
     if not name:
         raise DistroError("a distribution name is required; the default "

@@ -107,6 +107,29 @@ def find_residue(state: state_mod.MachineState,
     return found
 
 
+def residue_now(settings: dict[str, Any], *, expected_name: str | None = None
+                ) -> tuple[state_mod.MachineState, list[str]]:
+    """The machine as it is right now, and what is on it that must not be.
+
+    The same reading `ensure_clean` makes before deciding whether to uninstall,
+    exposed for the cases whose whole assertion is that nothing was installed --
+    a cancelled wizard, a command line the product rejects. Those cases must
+    never re-list what residue MEANS: a second list goes stale against this
+    module the first time an artifact is added here, and it goes stale silently,
+    still green.
+
+    A single reading, never a wait. Only positive conditions are ever waited
+    for: "still absent after five minutes" is evidence of patience, not of
+    correctness.
+
+    include_guest=False -- every question here is answered from Windows, and
+    running commands inside a distribution that should not exist costs a
+    timeout each to learn nothing.
+    """
+    state = state_mod.snapshot(settings, include_guest=False)
+    return state, find_residue(state, _candidate_install_dirs(state, expected_name))
+
+
 def stop_tray(note: Note | None = None) -> bool:
     """Stop the product's Tray before uninstalling it.
 
@@ -134,7 +157,6 @@ def stop_tray(note: Note | None = None) -> bool:
 def ensure_clean(settings: dict[str, Any],
                  installer: config_mod.InstallerPackage,
                  log_path: Path, *,
-                 mode: str = "passive",
                  expected_name: str | None = None,
                  note: Note | None = None) -> CleanResult:
     """Leave the machine with no CUBRID For WSL on it, or raise saying why not.
@@ -155,11 +177,19 @@ def ensure_clean(settings: dict[str, Any],
     stop_tray(say)
 
     timeout = settings["timeouts"]["uninstall_seconds"]
+    # Always QUIET, whatever mode the install under test uses. A /passive
+    # uninstall draws a "CUBRID For WSL Setup" window that can outlive its own
+    # process, and the wizard driver then refuses to start because it cannot
+    # tell that leftover apart from the window it is about to open. The
+    # /passive-vs-/quiet distinction only affects ActionEnvironmentCheck, which
+    # is sequenced on install and never on uninstall.
     if before.arp.present and before.arp.uninstall_string:
         result = silent.uninstall_with_command(before.arp.uninstall_string,
-                                               log_path, timeout=timeout)
+                                               log_path, timeout=timeout,
+                                               mode="quiet")
     else:
-        result = silent.uninstall(installer, log_path, timeout=timeout, mode=mode)
+        result = silent.uninstall(installer, log_path, timeout=timeout,
+                                  mode="quiet")
     say(f"  reset      : {result.describe()}")
 
     # Never assert on the uninstall exit code -- assert the machine. Removal is

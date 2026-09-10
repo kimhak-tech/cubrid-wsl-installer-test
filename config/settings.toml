@@ -13,7 +13,8 @@ path = ""
 user = "cubrid"
 # Prefixed to in-distro commands that mirror how the product invokes WSL:
 #   wsl -d <name> -u cubrid --exec bash -c ". ~/.cubrid.sh; <command>"
-# OPS-002 deliberately does NOT use this -- see that test.
+# INS-001's environment checks deliberately do NOT use this: they read a fresh
+# LOGIN shell, because persistence across sessions is the point of the check.
 env_setup = ". ~/.cubrid.sh 2>/dev/null; "
 
 # No distro name here on purpose. What a machine actually has installed is read
@@ -32,9 +33,70 @@ protected_distros = ["Ubuntu", "docker-desktop"]
 install_seconds = 900
 uninstall_seconds = 600
 wsl_command_seconds = 60
+# `cubrid service start` brings up three components, `createdb` writes a
+# database's volumes, and `csql` on a cold database opens them -- none of
+# which fits the budget a status read is sized for. Used by the Category 03
+# (OPS) cases through cubrid_cli.for_installation.
+cubrid_command_seconds = 300
+# OPS-004 downloads a CUBRID engine package (~100 MB) inside the distribution
+# and runs its installer. Neither fits the per-command budget above.
+upgrade_seconds = 1200
 # demodb creation is dispatched asynchronously and can finish after the
 # installer has already exited, so the install fixture polls for it.
 settle_seconds = 300
+
+[upgrade]
+# OPS-004 -- the CUBRID ENGINE installed OVER the one the WSL image ships.
+#
+# This is an upgrade INSIDE the distribution, not a re-run of the Windows
+# bundle: the image installs CUBRID from ftp.cubrid.org (see the generated
+# Dockerfile) and this installs the self-extracting .sh from the same place,
+# which is what the workbook's steps name.
+#
+# Point it at a specific build to test a specific upgrade. It may also be a
+# path to a .sh already inside the distribution -- anything wget accepts, or an
+# absolute guest path.
+# PIN A BUILD; never point this at a `-latest-` path. A moving target makes the
+# run unreproducible, and OPS-004 reads the version it asserts out of this
+# filename -- a name carrying no version leaves the case with nothing to check.
+url = "https://ftp.cubrid.org/CUBRID_Engine/11.4.5/CUBRID-11.4.5.1866-e9c17f7-Linux.x86_64.sh"
+
+# There is deliberately NO expected-version setting. OPS-004 reads the version
+# out of the PACKAGE NAME above, so the url is the only thing to change and the
+# two can never disagree. A name carrying no version (`CUBRID-11.4-latest-...`)
+# cannot be checked, and the case reports that rather than asserting nothing.
+#
+# NOTE THE DIRECTION: 11.4.5 is OLDER than the 11.4.6 the image ships, so as
+# configured this replaces the engine rather than upgrading it. The workbook's
+# "install a new cubrid version" means another build, not a higher one.
+
+# Options passed to the engine installer, ahead of the piped answers.
+#
+# The package is a CPack self-extracting archive -- its header is verbatim
+# CPack ("This is a self-extracting archive.", "Do you accept the license?
+# [yN]:", "License not accepted. Exiting ...") -- so it takes CPack's options,
+# and BOTH of these are needed:
+#
+#   --skip-license    accepts the licence without a prompt.
+#   --exclude-subdir  extracts into the working directory instead of a
+#                     VERSIONED subdirectory. This one matters just as much:
+#                     CPack asks "Do you want to include the subdirectory
+#                     CUBRID-11.4.5.1866-...?" and a repeated "y" ACCEPTS it,
+#                     putting the engine in ~/CUBRID-11.4.5.1866-.../ instead
+#                     of over ~/CUBRID -- where PATH never finds it and
+#                     `cubrid_rel` still reports the OLD version, which reads
+#                     exactly like the install having done nothing.
+#
+# With these the installer asks nothing, so nothing depends on stdin reaching
+# it. The piped answers stay as a backstop for a prompt the flags do not
+# suppress; `cubrid_cli.install_engine` explains why the braces around that
+# pipe are load-bearing.
+#
+# Set to "" to fall back to answering the prompts, and read the transcript in
+# ops_004_installer.json to see what was asked. OPS-004 also reads
+# `ls -1d $HOME/CUBRID*` whenever the version does not change, which is what
+# tells a wrong install location apart from a no-op.
+installer_args = "--skip-license --exclude-subdir"
 
 [paths]
 reports = "reports"

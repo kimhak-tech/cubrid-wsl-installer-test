@@ -14,3 +14,6 @@ config/settings.local.toml
 
 # run output
 reports/
+
+# csql
+csql.*

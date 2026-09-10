@@ -32,4 +32,5 @@ markers = [
     "ui: driven through the wizard UI (pywinauto)",
     "destructive: installs or uninstalls the product; needs an elevated shell",
     "environment: read-only framework self-check; no product required",
+    "action: starts, stops, connects, queries or creates against the installed product; sorted after the observation cases sharing its machine state",
 ]

@@ -64,19 +64,23 @@ cubrid-wsl-installer-test/
 │   │   ├── silent.py          # Silent/unattended installer
 │   │   └── wizard.py          # Installer wizard
 │   ├── constants.py           # All product values: registry paths, install
-│   │                          #   options, wizard UI strings
+│   │                          #   options, tray identifiers, wizard UI strings
 │   ├── state.py               # Machine-state collection
+│   ├── cubrid_cli.py          # CUBRID's own CLI inside the distribution:
+│   │                          #   service/server control, csql, createdb
 │   ├── verify.py              # Expected vs actual verification
 │   ├── distro.py              # WSL operations
 │   ├── reset.py               # Machine cleanup
 │   ├── preflight.py           # Environment checks
 │   └── config.py              # Configuration loading
 ├── tests/
-│   ├── conftest.py             # Shared fixtures
-│   ├── test_environment.py     # Framework checks
-│   ├── test_install_silent.py  # Silent installation cases
-│   ├── test_install_wizard.py  # UI installation cases
-│   └── test_cubrid_runtime.py  # CUBRID runtime cases
+│   ├── conftest.py            # Shared fixtures: machine states, run report
+│   ├── test_environment.py    # Framework self-checks
+│   ├── INS/                   # Category 02, Installer Orchestration
+│   │   └── test_install_*.py
+│   └── OPS/                   # Category 03, CUBRID Operational
+│       ├── conftest.py        #   machine binding + precondition fixtures
+│       └── test_*.py
 └── reports/                   # Test results (gitignored)
 ```
 
@@ -127,7 +131,7 @@ Two things to know about that path:
   gitignored; the second is committed, so a path that exists only on your
   machine would break every teammate's clone. The environment check enforces this.
 - **Keep the installer's shipped filename.** The version fields are read *out of*
-  the name, and OPS-001 checks the CUBRID reported inside the distribution
+  the name, and INS-001 checks the CUBRID reported inside the distribution
   against them. A renamed file is refused rather than silently tested.
 
 Run the environment check before running installation tests:
@@ -150,21 +154,34 @@ nothing after it is meaningful.
 .\run-tests.ps1 all
 ```
 
-Run a specific case:
+Run a specific case, or a whole category:
 
 ```powershell
-.\run-tests.ps1 -Case INS-002
+.\run-tests.ps1 -Case INS-001
+.\run-tests.ps1 -Case OPS       # a bare category runs every case in it
 ```
 
-List tests without executing:
+Every suite installs once per **machine state** it needs, not once per case —
+which is what keeps a full run in minutes rather than hours. To see what a given
+selection actually costs before running it, `pytest --setup-plan -m silent`
+lists each session fixture exactly once where it is set up.
+
+List every case without executing anything — this, not a table in this file, is
+the current inventory:
 
 ```powershell
 .\run-tests.ps1 -CollectOnly
 ```
 
-Other options: `-Installer <path>` for a one-off build, and
-`-Mode passive|quiet` to choose the bundle's UI mode — not cosmetic, since
-`/passive` runs the installer's environment checks and `/quiet` skips them.
+What each case asserts is in its own file's docstring, under `Verifies:`.
+
+Other options: `-Installer <path>` for a one-off build.
+
+The bundle's UI mode is **not** a runner option. Each driver pins its own, and
+the choice is not cosmetic: `/passive` runs the installer's environment checks
+while `/quiet` skips them, so a case that names one has to keep it. Cleanup
+always uninstalls `/quiet`, because a `/passive` uninstall draws a window the
+wizard driver cannot tell apart from the one it is about to open.
 
 The environment checks always run first, whichever suite you ask for, so a
 broken setup fails in a second rather than after a five-minute install.
@@ -190,41 +207,44 @@ Test results are stored under `reports/<timestamp>/`:
 
 ---
 
-## 6. Current Automated Scenarios
-
-| Case | Method | Purpose |
-|---|---|---|
-| INS-001 | UI | Verify installation through the real setup wizard |
-| INS-002 | Silent | Verify the installed WSL distribution is WSL 2 |
-| OPS-001 | Silent | Verify CUBRID runtime and version |
-| OPS-002 | Silent | Verify CUBRID environment configuration |
-
-These are **sample scenarios** used to validate the framework.
-The remaining scenarios from the test-scenario workbook will be added
-progressively by the QA team.
-
----
-
-## 7. Adding a New Test Case
+## 6. Adding a New Test Case
 
 When adding a new scenario:
 
 1. Use the workbook case ID in the test name, lower case with underscores
-   (`test_ins_016_...`), so `-Case INS-016` finds it.
-2. Reuse existing fixtures whenever possible.
-3. Keep product-specific verification in the verification layer rather than
+   (`test_ins_005_...`), so `-Case INS-005` finds it.
+2. Open the file with the standard docstring — title line, one or two lines of
+   what the case is about, then a `Verifies:` bullet list of the assertions, and
+   nothing else:
+
+   ```python
+   """CUBRID Operational -- OPS-001, service stop/start cycle.
+
+   Asserts the TRANSITION. INS-001 owns the post-install "already running" state.
+
+   Verifies:
+   - `cubrid service stop` confirms master, broker and manager stopped
+   - ...
+   """
+   ```
+
+   No case-ID history, no dates, no "absorbed from" tags — IDs get renumbered
+   and a stale one sends the reader to the wrong workbook row. Constraints a
+   reader must not break belong inline, next to the code they govern.
+3. Reuse existing fixtures whenever possible.
+4. Keep product-specific verification in the verification layer rather than
    duplicating it in tests.
-4. Avoid hardcoded product values in test files — they belong in `constants.py`.
-5. Keep each test independent and restore any machine state it changes. The
+5. Avoid hardcoded product values in test files — they belong in `constants.py`.
+6. Keep each test independent and restore any machine state it changes. The
    install fixtures are shared for the whole session, so a test that stops the
    service hands the next test a stopped service.
-6. Never `time.sleep()`. Use `state.wait_until(...)`.
+7. Never `time.sleep()`. Use `state.wait_until(...)`.
 
 Example:
 
 ```python
-def test_ins_016_desktop_shortcuts(silent_install):
-    problems = silent_install.comparison.problems("shortcuts")
+def test_ins_005_something(silent_install):
+    problems = silent_install.comparison.problems("distro")
     assert not problems, problems
 ```
 
@@ -232,11 +252,13 @@ def test_ins_016_desktop_shortcuts(silent_install):
 
 | You are adding | It goes in |
 |---|---|
-| A case against an existing installation | a `tests/test_*.py` file — no new fixture |
+| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`) — no new fixture |
 | A fact every installation should satisfy | a `Check` in `verify.CHECKS` — both drivers pick it up |
 | Something new read from the machine | the matching `read_*` in `state.py` |
 | A registry path, option name or UI string | `constants.py` |
 | A new install-option combination | a copy of `constants.INSTALL_OPTIONS` plus one fixture in `conftest.py` |
+| An action against the *installed* product (start, stop, connect, query, create) | a method on `cubrid_cli.CubridCli`, and a case under `tests/OPS/` marked `action` |
+| A recorded product output format | a `parse_*` function in `state.py`, pinned by a self-check in `test_environment.py` |
 
 ### Architecture Rule
 

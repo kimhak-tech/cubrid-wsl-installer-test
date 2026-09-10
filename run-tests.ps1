@@ -4,11 +4,15 @@
     stable means the runner underneath can change without retraining anyone.
 
         .\run-tests.ps1 environment   # read-only self-check (default)
-        .\run-tests.ps1 silent        # INS-002, OPS-001, OPS-002   DESTRUCTIVE
-        .\run-tests.ps1 ui            # INS-001                     DESTRUCTIVE
-        .\run-tests.ps1 all           # everything
+        .\run-tests.ps1 silent        # every case with no UI dependency  DESTRUCTIVE
+        .\run-tests.ps1 ui            # every case driven through the wizard  DESTRUCTIVE
+        .\run-tests.ps1 all           # both, self-check first  DESTRUCTIVE
 
-    One case by its ID:   .\run-tests.ps1 -Case INS-002
+    Suites are described by what they SELECT, never by a list of case IDs: a
+    list here goes stale the day a case is added and nothing fails when it does.
+    -CollectOnly is the inventory.
+
+    One case by its ID:   .\run-tests.ps1 -Case INS-001
 #>
 [CmdletBinding()]
 param(
@@ -16,19 +20,13 @@ param(
     [ValidateSet('environment', 'silent', 'ui', 'all')]
     [string]$Suite = 'environment',
 
-    # A manual test-case ID, e.g. -Case INS-002. Case IDs are part of the test
-    # function names, so this becomes a plain pytest -k filter. It overrides
-    # -Suite. The hyphen is translated to an underscore because pytest's -k
-    # expression grammar does not accept one.
+    # A workbook case ID (-Case INS-001) or a whole category (-Case INS). Case
+    # IDs are part of the test function names, so this becomes a pytest -k
+    # filter. It overrides -Suite. The hyphen is translated to an underscore
+    # because pytest's -k expression grammar does not accept one.
     [string]$Case,
 
     [string]$Installer,
-
-    # /passive gives the MSI UILevel 4 and RUNS the environment checks (their
-    # dialogs are merely suppressed); /quiet gives UILevel 2 and skips them.
-    # Not cosmetic.
-    [ValidateSet('passive', 'quiet')]
-    [string]$Mode = 'passive',
 
     # List what WOULD run, and stop. The only risk-free way to check a filter
     # against a suite that installs and uninstalls the product.
@@ -86,7 +84,18 @@ Settings > Apps > Advanced app settings > App execution aliases.
     # Not named $args: that is a PowerShell automatic variable.
     $pytestArgs = @('-m', 'pytest')
     if ($Case) {
-        $pytestArgs += @('-k', $Case.Replace('-', '_').ToLower())
+        # Anchored as `test_<id>_`, never the bare ID. `-k` is a plain SUBSTRING
+        # match over the whole test name, so a bare `ins` also selects every
+        # test whose name merely CONTAINS it -- `test_the_configured_installer_
+        # resolves`, and `test_ops_004_install_a_new_cubrid_version...`, which
+        # replaces the CUBRID engine inside the shared machine. `-Case INS`
+        # silently doing an engine swap is the worst shape a selection bug can
+        # take. Every case function is named `test_<category>_<number>_...`, so
+        # anchoring on that prefix makes INS mean INS and INS-001 mean one case.
+        $filter = $Case.Replace('-', '_').ToLower()
+        if (-not $filter.StartsWith('test_')) { $filter = "test_$filter" }
+        if (-not $filter.EndsWith('_'))       { $filter = "${filter}_" }
+        $pytestArgs += @('-k', $filter)
     } else {
         switch ($Suite) {
             'environment' { $pytestArgs += @('-m', 'environment') }
@@ -96,7 +105,6 @@ Settings > Apps > Advanced app settings > App execution aliases.
         }
     }
     if ($Installer)   { $pytestArgs += @('--installer', $Installer) }
-    $pytestArgs += @('--install-mode', $Mode)
     if ($CollectOnly) { $pytestArgs += @('--collect-only', '-q') }
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
