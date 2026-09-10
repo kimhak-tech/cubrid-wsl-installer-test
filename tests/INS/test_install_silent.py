@@ -44,24 +44,19 @@ def test_ins_002_full_default_installation_via_the_silent_cli(
     result = silent_install.result
 
     # ----------------------------------------------------------------- #
-    # 1. The bundle finished, and showed nothing
+    # 1. The bundle showed nothing
     # ----------------------------------------------------------------- #
+    # The exit code is NOT re-checked here. `_provision` already refuses to hand
+    # over an Installation whose install timed out or exited outside 0/3010, so
+    # a test that reached this line has one that did not -- and a second copy of
+    # that assertion could only ever be unreachable.
+    #
     # "Burn can return before the chained MSI completes if the process is not
     # waited on." Two things cover that: the driver uses subprocess.run, which
     # waits, and the install fixture then WAITS for the machine to settle --
     # registry key, distribution, demodb, Tray and the CUBRID components -- so
     # an exit code that arrived early cannot be mistaken for a finished install.
     note(f"  INS-002-run    : {result.describe()}")
-    if result.timed_out:
-        problems.append(
-            f"the silent install timed out after {result.duration_seconds:.0f}s. "
-            "The product's own WSL import step runs with no timeout of its own, "
-            "so ours is the only backstop.")
-    elif not result.ok:
-        problems.append(
-            f"the bundle exited {result.returncode}. INS-002 accepts 0, or "
-            f"{silent.REBOOT_REQUIRED} when a reboot is pending; anything else "
-            "is an install that did not happen.")
 
     # "Confirm no UI was displayed at any point" -- asserted from the bundle's
     # OWN log rather than from the command line we passed. The command line only

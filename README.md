@@ -76,7 +76,8 @@ cubrid-wsl-installer-test/
 ├── tests/
 │   ├── conftest.py            # Shared fixtures: machine states, run report
 │   ├── test_environment.py    # Framework self-checks
-│   ├── test_install_*.py      # Category 02, Installer Orchestration
+│   ├── INS/                   # Category 02, Installer Orchestration
+│   │   └── test_install_*.py
 │   └── OPS/                   # Category 03, CUBRID Operational
 │       ├── conftest.py        #   machine binding + precondition fixtures
 │       └── test_*.py
@@ -160,8 +161,9 @@ Run a specific case, or a whole category:
 .\run-tests.ps1 -Case OPS       # every OPS case -- the ID is a substring match
 ```
 
-The `silent` suite runs off **one install**: the OPS cases are Automation =
-Silent and share `silent_install`'s machine rather than provisioning their own.
+The `silent` suite runs off **two installs**: INS-002 and every OPS case share
+`silent_install`'s machine rather than provisioning their own, and INS-004 adds
+one more because WSL 1 is a different machine, not a different assertion.
 
 List every case without executing anything — this, not a table in this file, is
 the current inventory:
@@ -205,7 +207,7 @@ Test results are stored under `reports/<timestamp>/`:
 When adding a new scenario:
 
 1. Use the workbook case ID in the test name, lower case with underscores
-   (`test_ins_003_...`), so `-Case INS-003` finds it.
+   (`test_ins_005_...`), so `-Case INS-005` finds it.
 2. Open the file with the standard docstring — title line, one or two lines of
    what the case is about, then a `Verifies:` bullet list of the assertions, and
    nothing else:
@@ -236,8 +238,8 @@ When adding a new scenario:
 Example:
 
 ```python
-def test_ins_003_wsl1_mode(wsl1_install):
-    problems = wsl1_install.comparison.problems("distro")
+def test_ins_005_something(silent_install):
+    problems = silent_install.comparison.problems("distro")
     assert not problems, problems
 ```
 
@@ -245,7 +247,7 @@ def test_ins_003_wsl1_mode(wsl1_install):
 
 | You are adding | It goes in |
 |---|---|
-| A case against an existing installation | a `tests/test_*.py` file — no new fixture |
+| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`) — no new fixture |
 | A fact every installation should satisfy | a `Check` in `verify.CHECKS` — both drivers pick it up |
 | Something new read from the machine | the matching `read_*` in `state.py` |
 | A registry path, option name or UI string | `constants.py` |

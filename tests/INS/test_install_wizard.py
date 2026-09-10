@@ -86,14 +86,14 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     # One comparison covers both, because both ask the same question: does the
     # machine match the options it was installed with? Every expectation is
     # DERIVED from those options rather than hard-coded, which is what will let
-    # INS-003, INS-005 and INS-007 reuse this unchanged -- INS-007 inverts
+    # INS-003, INS-004 and INS-005 reuse this unchanged -- INS-003 inverts
     # demodb simply by installing with CREATE_DEMODB=0.
     #
     # Two pairs are easy to confuse, and are checked separately for that reason:
     #
     #   startup.tray_app  the Tray is REGISTERED for the next logon (REG_TRAY_APP)
     #   tray.running      the Tray process is up RIGHT NOW        (START_TRAY_APP)
-    #     -- two different options; INS-004 installs them in OPPOSITION, which
+    #     -- two different options; INS-003 installs them in OPPOSITION, which
     #        is what proves they act independently.
     #
     #   service.broker             the broker service is up
@@ -162,9 +162,9 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     #
     # Only EXISTENCE is asserted, by the comparison above. Both links are still
     # fully parsed and reported here, so the evidence for the target-and-icon
-    # assertions keeps arriving while they are switched off -- see the GAP note
-    # at the end. On the day the product is fixed, the run notes will already
-    # show whether re-enabling them would pass.
+    # assertions keeps arriving while they are switched off -- verify.CHECKS
+    # carries the three that are commented out and why. On the day the product
+    # is fixed, the run notes will already show whether re-enabling them passes.
     # ----------------------------------------------------------------- #
     shortcuts = wizard_install.state.shortcuts
     for label, shortcut in (("distro", shortcuts.distro), ("tray", shortcuts.tray)):
@@ -181,36 +181,6 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     # things.
     # ----------------------------------------------------------------- #
     problems.extend(check_against_bundle(wizard_install, "INS-001"))
-
-    # ----------------------------------------------------------------- #
-    # The one assertion in INS-001's set this framework does NOT make.
-    # Reported on every run, passing or failing: an assertion nobody can see
-    # missing is indistinguishable from one that passed.
-    # ----------------------------------------------------------------- #
-    note("  INS-001-gap    : GAP -- the CUBRID SERVER component is not asserted, "
-         "only master, broker and manager [INS-001 lists 'server, broker and "
-         "manager RUNNING']. The `@ cubrid server status` "
-         "section is EMPTY on a healthy install because stock cubrid.conf "
-         "leaves `server=` commented out, so no database is started. Whether "
-         "the image should set server=demodb is open with development. The "
-         "component is still parsed and printed above.")
-    note("  INS-001-gap    : GAP -- desktop shortcut TARGETS and ICONS are not "
-         "asserted, only that both .lnk files exist [the workbook asks for 'a "
-         "target that exists on disk with the correct icon -- not merely "
-         "present by filename']. The product does not do this correctly yet: "
-         "the tray link names no "
-         "target at all -- CubridCustomActions.cpp builds it as installDir + "
-         "'\\\\' + trayAppFile and InstallDir already ends in a separator, so "
-         "Windows saves it with no LocalBasePath. Both links are still parsed "
-         "and printed above, so re-enabling the checks is three lines in "
-         "verify.CHECKS.")
-    note("  INS-001-gap    : GAP -- Windows optional features "
-         "(Microsoft-Windows-Subsystem-Linux, VirtualMachinePlatform) are NOT "
-         "asserted. Reading them needs PowerShell, "
-         "which this framework does not use, and the assertion is vacuous on a "
-         "machine where WSL is already enabled -- it would pass without the "
-         "installer having done anything. Needs a VM snapshot with both "
-         "features OFF.")
 
     assert not problems, (
         f"INS-001 found {len(problems)} problem(s) with the default wizard "

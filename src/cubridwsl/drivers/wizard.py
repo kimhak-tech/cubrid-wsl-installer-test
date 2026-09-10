@@ -743,6 +743,77 @@ def _unsupported_options(options: dict[str, Any]) -> dict[str, Any]:
             and key != "CUB_DEFAULT_WSL_NAME"}
 
 
+def _stepper(result: WizardResult, deadline: float, step_timeout: float,
+             say: Callable[[str], None]):
+    """The walk machinery both wizard paths share: find a page, act on it, record it.
+
+    Shared rather than copied because the two paths differ ONLY in which pages
+    they visit. A second copy would be free to drift on the parts that are not
+    about the scenario at all -- the deadline, the blocking-dialog guard, the
+    step record -- and drift there is invisible: both copies keep working while
+    only one of them still checks for a modal dialog.
+    """
+    def guard() -> None:
+        """Checked on every poll of every wait -- see check_for_blocking_dialog."""
+        check_for_blocking_dialog(say)
+
+    def step(name: str, titles: list[str], action, *, wait: float | None = None,
+             accept=None) -> None:
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"ran out of time before step {name!r}")
+        step_started = time.monotonic()
+        window = find_window(titles, timeout=wait or step_timeout,
+                             accept=accept, guard=guard)
+        win, backend = _connect(window.handle)
+        performed = action(win)
+        elapsed = time.monotonic() - step_started
+        result.steps.append(StepRecord(name, window.title, backend,
+                                       str(performed), elapsed))
+        say(f"    wizard   : {name:<18} {window.title!r} -> {performed} ({elapsed:.0f}s)")
+
+    return step
+
+
+def _walk_to_install_options(step, strings) -> None:
+    """Bundle welcome, Welcome, License, Environment Check -- then stop.
+
+    Every wizard path crosses these four pages identically and diverges only at
+    InstallOptionsDlg, which is the page each scenario is actually about. Copied
+    into each path they would drift on the parts that are not about the scenario
+    at all: a renamed licence checkbox would be fixed where someone happened to
+    hit it and stay broken in the other walk, which fails as "the licence page
+    did not appear" rather than as what it is.
+    """
+    step("bundle-welcome", strings("bundle_title"),
+         lambda w: click_button(w, strings("bundle_btn_install")))
+    step("welcome", strings("welcome_title"),
+         lambda w: click_button(w, strings("btn_next")))
+
+    def _license(win):
+        ticked = tick_checkbox(win, strings("license_accept"))
+        return f"licence {ticked} + " + click_button(win, strings("btn_next"))
+    step("license", strings("license_title"), _license)
+
+    step("environment-check", strings("envcheck_title"),
+         lambda w: click_button(w, strings("btn_next")))
+
+
+def _record_bundle_process(result: WizardResult,
+                           process: subprocess.Popen | None) -> None:
+    """Note how the bundle process ended, without waiting for it or killing it.
+
+    Recorded rather than acted on, deliberately: a bundle still running after a
+    walk that has finished is itself the finding, and killing an installer
+    mid-operation is how a machine ends up half-installed.
+    """
+    if process is None:
+        return
+    result.returncode = process.poll()
+    if result.returncode is None and not result.ok:
+        result.error = (f"{result.error}; the bundle process (pid "
+                        f"{process.pid}) is still running")
+
+
 def install(package: config_mod.InstallerPackage, options: dict[str, Any],
             log_path: Path, *, timeout: int, step_timeout: float = 120,
             install_dir: str | None = None,
@@ -779,23 +850,7 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     started = time.monotonic()
     deadline = started + timeout
 
-    def guard() -> None:
-        """Checked on every poll of every wait -- see check_for_blocking_dialog."""
-        check_for_blocking_dialog(say)
-
-    def step(name: str, titles: list[str], action, *, wait: float | None = None,
-             accept=None) -> None:
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"ran out of time before step {name!r}")
-        step_started = time.monotonic()
-        window = find_window(titles, timeout=wait or step_timeout,
-                             accept=accept, guard=guard)
-        win, backend = _connect(window.handle)
-        performed = action(win)
-        elapsed = time.monotonic() - step_started
-        result.steps.append(StepRecord(name, window.title, backend,
-                                       str(performed), elapsed))
-        say(f"    wizard   : {name:<18} {window.title!r} -> {performed} ({elapsed:.0f}s)")
+    step = _stepper(result, deadline, step_timeout, say)
 
     try:
         assert_no_setup_window(strings("bundle_title"), note=say)
@@ -805,18 +860,8 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
         # failure. Same as the silent driver.
         process = subprocess.Popen([str(package.path), "/log", str(log_path)])
 
-        step("bundle-welcome", strings("bundle_title"),
-             lambda w: click_button(w, strings("bundle_btn_install")))
-        step("welcome", strings("welcome_title"),
-             lambda w: click_button(w, strings("btn_next")))
+        _walk_to_install_options(step, strings)
 
-        def _license(win):
-            ticked = tick_checkbox(win, strings("license_accept"))
-            return f"licence {ticked} + " + click_button(win, strings("btn_next"))
-        step("license", strings("license_title"), _license)
-
-        step("environment-check", strings("envcheck_title"),
-             lambda w: click_button(w, strings("btn_next")))
         def _options(win):
             """Set every option on InstallOptionsDlg, then advance.
 
@@ -885,14 +930,100 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
 
-    if process is not None:
-        # Recorded rather than waited on, deliberately: a bundle still running
-        # after a failed run is itself a finding, and killing an installer
-        # mid-operation is how a machine ends up half-installed.
-        result.returncode = process.poll()
-        if result.returncode is None and not result.ok:
-            result.error = (f"{result.error}; the bundle process (pid "
-                            f"{process.pid}) is still running")
+    _record_bundle_process(result, process)
+    result.duration_seconds = time.monotonic() - started
+    return result
 
+
+# How long to wait for whatever Burn draws after a cancelled MSI. Short on
+# purpose: the product does not specify that there IS such a page, so this is a
+# budget for tidying up, not for a step the run depends on.
+CANCEL_CLOSE_WAIT = 20.0
+
+
+def cancel(package: config_mod.InstallerPackage, log_path: Path, *,
+           timeout: int, step_timeout: float = 120,
+           note: Callable[[str], None] | None = None) -> WizardResult:
+    """Drive the wizard partway, then cancel it.
+
+    Stops on the installation-directory page -- the last one before Ready to
+    Install, and the furthest the wizard goes without entering
+    InstallExecuteSequence. It is also PAST the Next that fires
+    ActionUpdateInstallFolder and ActionCheckWslName, so the machine has had
+    custom actions run against it before the cancel. Cancelling on the Welcome
+    page would be a cheaper walk proving less.
+
+    The confirmation is three windows, and the last two share a title:
+
+        Cancel -> CustomCancelDlg ("Cancel Installation") -> Yes -> CustomUserExit
+
+    CustomUserExit is declared Title="[ProductName] Setup", the same string the
+    bundle window carries, so it is accepted only as an MSI dialog holding a
+    Finish button -- the same test the completion page gets.
+
+    Like every driver here this one only DRIVES. Whether the machine is clean
+    afterwards is the case's question, and reset.residue_now answers it.
+    """
+    say = note or (lambda _text: None)
+    preflight.require_elevation(preflight.WIZARD_REASON)
+
+    strings = constants.ui_strings
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = WizardResult(action="wizard-cancel", duration_seconds=0.0,
+                          log_path=log_path)
+    process: subprocess.Popen | None = None
+    started = time.monotonic()
+    step = _stepper(result, started + timeout, step_timeout, say)
+
+    try:
+        assert_no_setup_window(strings("bundle_title"), note=say)
+        process = subprocess.Popen([str(package.path), "/log", str(log_path)])
+
+        _walk_to_install_options(step, strings)
+
+        # Every option left at its default. What is under test is the cancel,
+        # and a scenario that also changed options could not say which of the
+        # two the machine's state was answering.
+        step("install-options", strings("options_title"),
+             lambda w: click_button(w, strings("btn_next")))
+
+        step("install-directory", strings("installdir_title"),
+             lambda w: click_button(w, strings("btn_cancel")))
+        step("cancel-confirm", strings("cancel_title"),
+             lambda w: click_button(w, strings("btn_yes")))
+        step("user-exit", strings("bundle_title"),
+             lambda w: click_button(w, strings("btn_finish")),
+             accept=_is_completion_dialog)
+
+        # What Burn draws once the MSI reports a user cancel is not specified by
+        # the product, so not finding it is not a failure of this run. A window
+        # LEFT OPEN is a failure of the next one, though -- assert_no_setup_window
+        # refuses to start the wizard while any window carries that title -- so
+        # it is attempted on a short budget and recorded either way.
+        #
+        # MSI dialogs are rejected by class. CustomUserExit carries this same
+        # title and does not close the instant its Finish is clicked, so without
+        # this the walk can catch the dialog on its way out, fail to find a
+        # Close button on it, and record "nothing to close" while the bundle
+        # window it never looked at is still open -- breaking the NEXT run.
+        try:
+            step("bundle-close", strings("bundle_title"),
+                 lambda w: click_button(w, strings("bundle_btn_close")),
+                 wait=CANCEL_CLOSE_WAIT,
+                 accept=lambda window: not (window.class_name or "").startswith(
+                     constants.MSI_DIALOG_CLASS_PREFIX))
+        except (TimeoutError, WizardError) as exc:
+            result.steps.append(StepRecord(
+                "bundle-close", "", "-",
+                f"no bundle page to close ({type(exc).__name__})", 0.0))
+            say(f"    wizard   : {'bundle-close':<18} not shown; nothing left open")
+
+    except TimeoutError as exc:
+        result.timed_out = True
+        result.error = str(exc)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+
+    _record_bundle_process(result, process)
     result.duration_seconds = time.monotonic() - started
     return result

@@ -1,10 +1,9 @@
 """Marks tests/OPS as a package so its conftest does not shadow the root one.
 
-Without this file pytest imports BOTH conftest modules under the bare name
-`conftest`, and `tests/test_install_wizard_all_custom.py`'s
-`from conftest import INS_004_WSL_NAME` then resolves to the wrong one, breaking
-collection for the whole suite.
+Without this file pytest imports every sibling conftest under the bare name
+`conftest`, and the second one to load shadows the first.
 
-`tests/` itself is deliberately NOT a package -- making it one would rename every
-test module and change what that import has to say.
+`tests/` itself is deliberately NOT a package: the root conftest must stay the
+one pytest finds by directory walk for BOTH categories, and the provisioning
+fixtures live there because OPS builds on `silent_install` just as INS does.
 """

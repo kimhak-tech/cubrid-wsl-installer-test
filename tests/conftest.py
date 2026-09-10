@@ -59,7 +59,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # INS-001's own assertions read the live disk (the uninstall string names a file
 # that must exist), so they have to run before the silent install replaces it.
 INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
-                         "wizard_all_custom_install")
+                         "wizard_all_custom_install", "silent_wsl1_install")
 
 
 # The case ID carried in a test function name, e.g. test_ops_002_... -> 2.
@@ -93,10 +93,12 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int, int]:
     machine, and OPS-004 replaces the engine so it has to come last.
 
     Both of the last two components exist because the alternative is collection
-    order, where `tests/OPS/` sorts ahead of `tests/test_install_*` because an
-    upper-case O precedes a lower-case t, and `test_create_database.py` ahead of
-    `test_service_lifecycle.py` because c precedes s -- neither of which has
-    anything to do with what the cases need.
+    order, where `tests/INS/` sorts ahead of `tests/OPS/` because I precedes O,
+    and `test_create_database.py` ahead of `test_service_lifecycle.py` because c
+    precedes s -- neither of which has anything to do with what the cases need.
+    Nothing here keys off a PATH: a case is placed by the machine state it asks
+    for and the markers it carries, so moving a file between folders cannot
+    change when it runs.
     """
     environment = 0 if item.get_closest_marker("environment") else 1
     action = 1 if item.get_closest_marker("action") else 0
@@ -232,7 +234,7 @@ class Installation:
     driver: str
     options: dict[str, Any]
     state: state_mod.MachineState
-    # Expected values the OPTIONS cannot imply. Today only INS-004 uses it: the
+    # Expected values the OPTIONS cannot imply. Today only INS-003 uses it: the
     # wizard lets the user choose an install directory, while the silent path
     # always derives one. See verify.compare(expected=...).
     expected: dict[str, Any] = field(default_factory=dict)
@@ -256,6 +258,25 @@ class Installation:
         return self._comparison
 
 
+def _record_run_facts(installer: config_mod.InstallerPackage) -> None:
+    """Which binary, under which account. A result is only quotable with both.
+
+    Shared by every fixture that runs the installer -- the ones that expect it
+    to succeed and the ones that expect it to refuse. A run whose facts were
+    recorded by only some of its fixtures is a report that cannot be read.
+    """
+    _note(f"  installer  : {installer.describe()}")
+    _RUN_FACTS["installer"] = {
+        "path": str(installer.path), "sha256": installer.sha256,
+        "cubrid_version": installer.cubrid_version,
+        "installer_version": installer.installer_version,
+        "build": installer.build,
+    }
+    _note(f"  account    : {preflight.current_account()} "
+          f"(elevated={preflight.is_elevated()}) -- this decides which HKCU "
+          f"hive the assertions read")
+
+
 def _provision(driver_name: str, install_fn, settings, installer, run_dir, *,
                options: dict[str, Any] | None = None,
                expected: dict[str, Any] | None = None) -> Installation:
@@ -271,17 +292,8 @@ def _provision(driver_name: str, install_fn, settings, installer, run_dir, *,
     options = {**constants.INSTALL_OPTIONS, **(options or {})}
     wsl_name = str(options["CUB_DEFAULT_WSL_NAME"])
 
-    _note(f"== provisioning a default install via the {driver_name} driver ==")
-    _note(f"  installer  : {installer.describe()}")
-    _RUN_FACTS["installer"] = {
-        "path": str(installer.path), "sha256": installer.sha256,
-        "cubrid_version": installer.cubrid_version,
-        "installer_version": installer.installer_version,
-        "build": installer.build,
-    }
-    _note(f"  account    : {preflight.current_account()} "
-          f"(elevated={preflight.is_elevated()}) -- this decides which HKCU "
-          f"hive the assertions read")
+    _note(f"== provisioning the machine via the {driver_name} driver ==")
+    _record_run_facts(installer)
 
     reset.ensure_clean(settings, installer, run_dir / f"reset-{driver_name}.log",
                        expected_name=wsl_name, note=_note)
@@ -604,7 +616,7 @@ def _ins_001_passed(junit_path: Path) -> bool:
     return False
 
 
-# INS-004's two custom values. Deliberately DIFFERENT from each other: the
+# INS-003's two custom values. Deliberately DIFFERENT from each other: the
 # default install directory is [LocalAppDataFolder][CUB_DEFAULT_WSL_NAME], so a
 # directory that merely followed the custom name would still BE the default and
 # the case would prove nothing.
@@ -614,19 +626,19 @@ def _ins_001_passed(junit_path: Path) -> bool:
 # a manual one are comparing the same thing. It is not a prefix or a suffix of
 # the shipping default CUBRID-FOR-WSL, which keeps "the custom name took" and
 # "the default was left alone" impossible to confuse for one another.
-INS_004_WSL_NAME = "CUBRID-WSL"
-INS_004_DIR_NAME = "CUBRID-INS004-Dir"
+INS_003_WSL_NAME = "CUBRID-WSL"
+INS_003_DIR_NAME = "CUBRID-INS003-Dir"
 
 
 @pytest.fixture(scope="session")
 def wizard_all_custom_install(settings, installer, run_dir) -> Installation:
-    """Installed:allCustom -- every option changed, through the wizard. INS-004.
+    """Installed:allCustom -- every option changed, through the wizard. INS-003.
 
     The five changes the workbook lists: three checkboxes unticked (demodb, Tray
     auto-start, desktop shortcuts) plus a custom distro name and a custom install
     directory. IS_WSL2_MODE stays at 1: the workbook's option list does not
     include it, and the baseline this inherits from INS-001 expects VERSION=2.
-    INS-003 owns WSL1.
+    INS-004 owns WSL1.
 
     START_TRAY_APP also stays at 1, and that is the interesting part. With
     REG_TRAY_APP off and START_TRAY_APP on, the two Tray settings are in
@@ -636,8 +648,8 @@ def wizard_all_custom_install(settings, installer, run_dir) -> Installation:
     DESTRUCTIVE, elevated, drives the real mouse and keyboard.
     """
     install_dir = ntpath.join(os.environ.get("LOCALAPPDATA", ""),
-                              INS_004_DIR_NAME)
-    options = {"CUB_DEFAULT_WSL_NAME": INS_004_WSL_NAME,
+                              INS_003_DIR_NAME)
+    options = {"CUB_DEFAULT_WSL_NAME": INS_003_WSL_NAME,
                "REG_TRAY_APP": 0, "CREATE_SHORTCUT": 0, "CREATE_DEMODB": 0}
     return _provision(
         "wizard-all-custom",
@@ -646,3 +658,152 @@ def wizard_all_custom_install(settings, installer, run_dir) -> Installation:
             timeout=settings["timeouts"]["install_seconds"], note=_note),
         settings, installer, run_dir, options=options,
         expected={"registry.install_dir": state_mod.normalize_path(install_dir)})
+
+
+# INS-004's one override. Deliberately the ONLY property that reaches the
+# command line: constants.INSTALL_OPTIONS IS the set of shipping defaults, and
+# passing the other five explicitly would test that the command line works
+# rather than that this property does. It is also what keeps the resulting
+# machine comparable to the one INS-002 leaves -- one variable moved, so one
+# attributable difference.
+INS_004_OPTIONS = {constants.OPTION_WSL2_MODE: 0}
+
+
+@pytest.fixture(scope="session")
+def silent_wsl1_install(settings, installer, run_dir) -> Installation:
+    """Installed:wsl1 -- the distribution imported at WSL 1. INS-004.
+
+    /quiet, pinned, as in `silent_install`: it is MSI UILevel 2, so
+    ActionEnvironmentCheck never runs and cannot contribute a difference of its
+    own. The only thing that moves between the two machines is IS_WSL2_MODE.
+
+    LAST in INSTALL_FIXTURE_ORDER, and that placement is load-bearing.
+    SetupWslDistro reaches WSL 1 by running `wsl --set-default-version 1` and
+    then importing WITHOUT `--version`, so the mode is carried by a
+    MACHINE-GLOBAL setting that this install leaves behind at 1. Anything
+    provisioned afterwards would depend on the product setting it back through
+    that same call -- whose exit code the product does not check.
+
+    DESTRUCTIVE and elevated. It cleans the machine first, which is what makes
+    its own precondition -- a Clean host -- true.
+    """
+    return _provision(
+        "silent-wsl1",
+        lambda options, log: silent.install(
+            installer, dict(INS_004_OPTIONS), log,
+            timeout=settings["timeouts"]["install_seconds"], mode="quiet"),
+        settings, installer, run_dir, options=INS_004_OPTIONS)
+
+
+# --------------------------------------------------------------------------- #
+# Runs that must leave NOTHING installed
+# --------------------------------------------------------------------------- #
+@dataclass
+class CleanRun:
+    """A run that was supposed to install nothing, and the machine after it."""
+
+    result: silent.RunResult | wizard.WizardResult
+    state: state_mod.MachineState
+    # What is present that must not be, in reset's words. Empty is the pass.
+    residue: list[str] = field(default_factory=list)
+    # The overrides the run was given, so a case reads what it was actually
+    # handed rather than importing a value from this file -- two sibling
+    # conftests both import as the bare name `conftest`, and the second to load
+    # shadows the first.
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+def _attempt(attempt_name: str, run_fn, settings, installer, run_dir, *,
+             options: dict[str, Any] | None = None,
+             expected_name: str | None = None) -> CleanRun:
+    """Clean the machine, run something that must NOT install, and read it back.
+
+    The counterpart to `_provision`, and deliberately not the same function.
+    `_provision` asserts the install succeeded, which is exactly what these
+    cases require it not to do -- folding them together would mean a flag that
+    turns off the one assertion holding the other fixtures up.
+
+    Nothing is waited for afterwards. The install fixtures wait because three of
+    the installer's effects land after it exits; here the expectation is
+    ABSENCE, and absence is never waited for -- "still not there after five
+    minutes" is evidence of patience, not of correctness.
+    """
+    preflight.require_windows()
+    preflight.require_elevation()
+
+    _note(f"== {attempt_name}: a run that must leave nothing installed ==")
+    _record_run_facts(installer)
+
+    # The machine must be clean BEFORE, or "nothing was installed" afterwards
+    # says nothing at all -- residue left by an earlier run would read exactly
+    # like residue this run created.
+    reset.ensure_clean(settings, installer,
+                       run_dir / f"reset-{attempt_name}.log",
+                       expected_name=expected_name, note=_note)
+
+    result = run_fn(run_dir / f"install-{attempt_name}.log")
+    _note(f"  attempt    : {result.describe()}")
+    _INSTALLS.append({"driver": attempt_name, "options": dict(options or {}),
+                      **result.as_dict()})
+
+    state, residue = reset.residue_now(settings, expected_name=expected_name)
+    (run_dir / f"state-{attempt_name}.json").write_text(
+        json.dumps(state.as_dict(), indent=2, default=str), encoding="utf-8")
+    _note(f"  machine    : {len(residue)} item(s) that must not be there")
+    return CleanRun(result=result, state=state, residue=residue,
+                    options=dict(options or {}))
+
+
+# The name a run that wrongly installed would install UNDER, so a leftover
+# directory is looked for in the right place. Neither case asks for a custom
+# name: INS-005 changes no options at all, and INS-006's own name cannot name a
+# Windows directory, which is the whole reason the product rejects it.
+_DEFAULT_WSL_NAME = str(constants.INSTALL_OPTIONS[constants.OPTION_WSL_NAME])
+
+
+@pytest.fixture(scope="session")
+def wizard_cancelled(settings, installer, run_dir) -> CleanRun:
+    """A wizard driven to the last page before Ready to Install, then cancelled.
+
+    INS-005. Requests no install fixture, so the ordering hook runs it before
+    every case that installs -- which suits it twice over: it is cheap, and it
+    leaves behind exactly the clean machine the install fixtures need.
+
+    DESTRUCTIVE in permission only -- it must be able to install, so it runs
+    elevated and drives the real mouse and keyboard, but a passing run installs
+    nothing.
+    """
+    return _attempt(
+        "wizard-cancel",
+        lambda log: wizard.cancel(
+            installer, log, timeout=settings["timeouts"]["install_seconds"],
+            note=_note),
+        settings, installer, run_dir, expected_name=_DEFAULT_WSL_NAME)
+
+
+# INS-006's rejected name, and ONE of CheckWslName's seven rules -- it also
+# refuses an empty name, one over 64 characters, a leading '-', '.' and '..', a
+# trailing '.', and the reserved device names. A disallowed CHARACTER is the
+# class the check exists for: a colon cannot name a Windows directory, and the
+# WSL name becomes a directory name. It is also safe to carry through a command
+# line, since Burn splits an override on its FIRST '='.
+INS_006_OPTIONS = {constants.OPTION_WSL_NAME: "CUBRID:FOR:WSL"}
+
+
+@pytest.fixture(scope="session")
+def silent_invalid_name(settings, installer, run_dir) -> CleanRun:
+    """An unattended install whose WSL name the product must refuse. INS-006.
+
+    /quiet, as the workbook's step names. It also proves the refusal is not a
+    UI behaviour: ActionCheckWslName and ActionInvalidWslNameError are sequenced
+    in InstallExecuteSequence, the only sequence a silent install runs at all.
+
+    DESTRUCTIVE in permission only -- a passing run installs nothing.
+    """
+    return _attempt(
+        "silent-invalid-name",
+        lambda log: silent.install(
+            installer, dict(INS_006_OPTIONS), log,
+            timeout=settings["timeouts"]["install_seconds"], mode="quiet"),
+        settings, installer, run_dir, options=INS_006_OPTIONS,
+        expected_name=_DEFAULT_WSL_NAME)

@@ -86,14 +86,22 @@ class RunResult:
                 "stdout": self.stdout[:2000], "stderr": self.stderr[:2000]}
 
 
-def ui_level_from_log(log_path: Path) -> int | None:
-    """The UI level Burn RECORDED for this run, from its own log.
+def variable_from_log(log_path: Path, name: str) -> str | None:
+    """The value Burn RECORDED for one of its variables, from its own log.
 
-    INS-002 has to show that no UI was displayed at any point. Inferring that
-    from the command line would only restate what we asked for; this reads what
-    the bundle says it did:
+        i410: Variable: IS_WSL2_MODE = 0
 
-        i410: Variable: WixBundleUILevel = 2
+    Read back rather than restated from the command line, for the same reason
+    the wizard driver reads a checkbox back after clicking it: the command line
+    says only what was ASKED FOR. A property the bundle never received, or
+    stopped forwarding, is invisible to a test that checks the EFFECT alone --
+    on a host that already produces that effect by default, such a test passes
+    for the wrong reason.
+
+    Matched on the `Variable: ` prefix so the command line Burn echoes near the
+    top of the log, which contains the overrides verbatim, cannot answer for it.
+    The LAST occurrence wins: Burn dumps its variables once at the end, after
+    everything that could have changed them.
 
     Returns None when the line is absent -- which is itself worth reporting,
     since a bundle that never wrote it may have failed before it started.
@@ -105,11 +113,22 @@ def ui_level_from_log(log_path: Path) -> int | None:
         text = log_path.read_bytes().decode("utf-8-sig", errors="replace")
     except OSError:
         return None
-    match = None
-    for match in re.finditer(
-            rf"{re.escape(constants.BURN_UI_LEVEL_VARIABLE)}\s*=\s*(\d+)", text):
-        pass                     # keep the LAST occurrence: the run's own value
-    return int(match.group(1)) if match else None
+    value = None
+    for match in re.finditer(rf"Variable: {re.escape(name)}\s*=\s*(.*)", text):
+        value = match.group(1).strip()
+    return value
+
+
+def ui_level_from_log(log_path: Path) -> int | None:
+    """The UI level Burn RECORDED for this run.
+
+    INS-002 has to show that no UI was displayed at any point, and the bundle
+    saying what it did is the only evidence that carries.
+    """
+    try:
+        return int(variable_from_log(log_path, constants.BURN_UI_LEVEL_VARIABLE))
+    except (TypeError, ValueError):
+        return None
 
 
 def as_properties(options: dict[str, Any]) -> list[str]:

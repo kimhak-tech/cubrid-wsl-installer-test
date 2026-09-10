@@ -51,7 +51,7 @@ def test_ops_001_service_stop_then_start(
     # The SERVER is excluded on purpose. A default install starts no database
     # (stock cubrid.conf leaves `server=` commented out), so there is nothing to
     # stop and that section is legitimately empty; asserting it would fail a
-    # correct machine. The GAP note below keeps that visible.
+    # correct machine. constants.SERVICE_COMPONENTS_* carries the reasoning.
     for component in awaited:
         if stop_verdict.get(component) is not True:
             problems.append(

@@ -327,7 +327,7 @@ def compare(options: dict[str, Any], state: MachineState, *,
     `_install_dir_for` derives the expected path from LOCALAPPDATA and the WSL
     name because that is what the SILENT install always produces -- but the
     wizard lets the user choose, and `ActionUpdateInstallFolder` only overwrites
-    the choice when UILevel < 5. So for INS-004 the expectation comes from the
+    the choice when UILevel < 5. So for INS-003 the expectation comes from the
     scenario rather than from a derivation that only holds silently.
 
     An override for a check that does not exist is refused: it would silently

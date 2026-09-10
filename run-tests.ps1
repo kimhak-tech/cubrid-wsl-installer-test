@@ -5,7 +5,7 @@
 
         .\run-tests.ps1 environment   # read-only self-check (default)
         .\run-tests.ps1 silent        # INS-002, 1 install           DESTRUCTIVE
-        .\run-tests.ps1 ui            # INS-001 + INS-004, 2 installs DESTRUCTIVE
+        .\run-tests.ps1 ui            # INS-001 + INS-003, 2 installs DESTRUCTIVE
         .\run-tests.ps1 all           # everything, 3 installs        DESTRUCTIVE
 
     One case by its ID:   .\run-tests.ps1 -Case INS-001

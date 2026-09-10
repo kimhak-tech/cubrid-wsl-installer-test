@@ -75,6 +75,13 @@ INSTALL_OPTIONS = {
     "CUB_DEFAULT_WSL_NAME": "CUBRID-FOR-WSL",
 }
 
+# The two a CASE has to name: INS-004 overrides the mode and reads it back out
+# of the bundle's log, INS-006 overrides the name and reports which name was
+# refused. A product literal in a test file is a bug, so they are named here.
+# The other four are only ever dict keys, which is why they are not.
+OPTION_WSL2_MODE = "IS_WSL2_MODE"
+OPTION_WSL_NAME = "CUB_DEFAULT_WSL_NAME"
+
 # --------------------------------------------------------------------------- #
 # Inside the distribution -- make_image/build_image.ps1 and the generated
 # Dockerfile, which write ~/.cubrid.sh and have ~/.bash_profile source it.
@@ -289,6 +296,10 @@ WIZARD_STRINGS = {
         "btn_next": "Next",
         "btn_install": "Install",
         "btn_finish": "Finish",
+        "btn_cancel": "Cancel",
+        # CustomCancelDlg, spawned by the Cancel button on every wizard page.
+        "cancel_title": "Cancel Installation",
+        "btn_yes": "Yes",
     },
     "ko": {
         "bundle_title": "CUBRID For WSL 설치",
@@ -305,6 +316,9 @@ WIZARD_STRINGS = {
         "btn_next": "다음",
         "btn_install": "설치",
         "btn_finish": "완료",
+        "btn_cancel": "취소",
+        "cancel_title": "설치 취소",
+        "btn_yes": "예",
     },
 }
 
@@ -390,6 +404,13 @@ WIZARD_FAILURE_TITLES = ("Installation Failed", "설치 실패",
 
 # The MSI dialogs' window class. The wizard's completion page shares its title
 # with other windows on screen, so the class is what distinguishes it.
+#
+# CustomUserExit -- the page a CANCELLED install ends on -- is declared
+# Title="[ProductName] Setup", and ProductName is "CUBRID For WSL", so its title
+# is character-for-character the bundle window's. There is deliberately no
+# separate string for it: a second copy of one literal is a copy that can drift.
+# It is told apart the same way the completion page is, by class plus a Finish
+# button, which is why both go through _is_completion_dialog.
 MSI_DIALOG_CLASS_PREFIX = "MsiDialog"
 
 # --------------------------------------------------------------------------- #

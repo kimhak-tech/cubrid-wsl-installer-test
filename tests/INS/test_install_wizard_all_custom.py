@@ -1,4 +1,4 @@
-"""Installer Orchestration -- INS-004, every install option off its default.
+"""Installer Orchestration -- INS-003, every install option off its default.
 
 INS-001's assertion set with the options inverted, which costs nothing extra
 because every expectation in `verify.CHECKS` is derived from the options the
@@ -24,12 +24,11 @@ import pathlib
 import pytest
 
 from cubridwsl import constants, distro
-from conftest import INS_004_WSL_NAME
 
 pytestmark = [pytest.mark.ui, pytest.mark.destructive]
 
 
-def test_ins_004_install_with_every_option_changed_via_the_wizard(
+def test_ins_003_install_with_every_option_changed_via_the_wizard(
         wizard_all_custom_install, check_against_bundle, note, dump_json):
     """Every option effect, the Tray settings in opposition, and the baseline.
 
@@ -54,9 +53,9 @@ def test_ins_004_install_with_every_option_changed_via_the_wizard(
     result = installation.result
     dump_json("wizard-all-custom-result", result.as_dict())
     for step in result.steps:
-        note(f"  INS-004-steps    : {step.name:<18} [{step.backend}] {step.action} "
+        note(f"  INS-003-steps    : {step.name:<18} [{step.backend}] {step.action} "
              f"({step.seconds:.0f}s)")
-    note(f"  INS-004-steps    : {result.describe()}")
+    note(f"  INS-003-steps    : {result.describe()}")
     if result.timed_out or result.error:
         problems.append(f"the wizard did not complete: {result.error}")
 
@@ -82,7 +81,7 @@ def test_ins_004_install_with_every_option_changed_via_the_wizard(
     comparison = installation.comparison
     dump_json("comparison-wizard-all-custom", comparison.as_list())
     for check in comparison.results:
-        note(f"  INS-004-comparison    : {check}")
+        note(f"  INS-003-comparison    : {check}")
     problems.extend(comparison.problems().splitlines())
 
     # ----------------------------------------------------------------- #
@@ -90,20 +89,20 @@ def test_ins_004_install_with_every_option_changed_via_the_wizard(
     # Printed in the workbook's order, so a run's notes can be walked straight
     # down the row: install directory, distro name, demodb, Tray, shortcuts.
     # ----------------------------------------------------------------- #
-    note(f"  INS-004-options    : InstallDir = {state.registry.install_dir}")
-    note(f"  INS-004-options    : WslName    = {state.registry.wsl_name!r}")
+    note(f"  INS-003-options    : InstallDir = {state.registry.install_dir}")
+    note(f"  INS-003-options    : WslName    = {state.registry.wsl_name!r}")
     entry = distro.find(str(state.registry.wsl_name or ""))
-    note(f"  INS-004-options    : wsl -l -v  -> "
+    note(f"  INS-003-options    : wsl -l -v  -> "
          f"{f'{entry.name} VERSION={entry.version}' if entry else '<absent>'}")
-    note(f"  INS-004-options    : databases  -> {list(state.cubrid.databases)}")
-    note(f"  INS-004-options    : {constants.RUN_VALUE_TRAY}  = "
+    note(f"  INS-003-options    : databases  -> {list(state.cubrid.databases)}")
+    note(f"  INS-003-options    : {constants.RUN_VALUE_TRAY}  = "
          f"{state.startup.tray_app!r}")
-    note(f"  INS-004-options    : {constants.RUN_VALUE_STARTER} = "
+    note(f"  INS-003-options    : {constants.RUN_VALUE_STARTER} = "
          f"{state.startup.starter!r} (unconditional -- never assert its ABSENCE)")
     for label, shortcut in (("distro", state.shortcuts.distro),
                             ("tray", state.shortcuts.tray)):
-        note(f"  INS-004-options    : shortcut[{label}] {shortcut.describe()}")
-    note(f"  INS-004-tray    : running={state.tray.running} "
+        note(f"  INS-003-options    : shortcut[{label}] {shortcut.describe()}")
+    note(f"  INS-003-tray    : running={state.tray.running} "
          f"window={state.tray.window_present} "
          f"registered={state.startup.tray_app_registered}")
 
@@ -115,14 +114,15 @@ def test_ins_004_install_with_every_option_changed_via_the_wizard(
     # been ignored -- [LocalAppDataFolder][CUB_DEFAULT_WSL_NAME], which
     # ActionUpdateInstallFolder sets on the Next of the options page, before
     # InstallSelectDirDlg overrides it. That path is not machine state the
-    # snapshot reads, and INS-004 is the only case where it differs from the
+    # snapshot reads, and INS-003 is the only case where it differs from the
     # chosen one -- so nothing else can check that the payload was written
     # ONCE, to the chosen path, rather than to both.
     # ----------------------------------------------------------------- #
     local_appdata = os.environ.get("LOCALAPPDATA", "")
     if local_appdata:
-        derived = ntpath.join(local_appdata, INS_004_WSL_NAME)
-        note(f"  INS-004-options    : derived-but-not-chosen path {derived} "
+        derived = ntpath.join(
+            local_appdata, str(installation.options["CUB_DEFAULT_WSL_NAME"]))
+        note(f"  INS-003-options    : derived-but-not-chosen path {derived} "
              f"exists={pathlib.Path(derived).is_dir()}")
         if pathlib.Path(derived).is_dir():
             problems.append(
@@ -139,20 +139,8 @@ def test_ins_004_install_with_every_option_changed_via_the_wizard(
     # and drift here is invisible: both keep passing while checking different
     # things.
     # ----------------------------------------------------------------- #
-    problems.extend(check_against_bundle(installation, "INS-004"))
-
-    # ----------------------------------------------------------------- #
-    # Reported on every run, passing or failing: an assertion nobody can see
-    # missing is indistinguishable from one that passed.
-    # ----------------------------------------------------------------- #
-    note("  INS-004-gap    : GAP -- the shortcut NAMING rule is unverifiable in "
-         "this configuration. The desktop shortcut is named <WslName>.lnk, and "
-         "shortcuts are OFF here, while INS-001 creates them under the DEFAULT "
-         "name. Nothing covers the derivation; add a dedicated case if it "
-         "matters.")
-    note("  INS-004-gap    : GAP -- Windows optional features and shortcut "
-         "targets are not asserted, as in INS-001.")
+    problems.extend(check_against_bundle(installation, "INS-003"))
 
     assert not problems, (
-        f"INS-004 found {len(problems)} problem(s) with the all-custom wizard "
+        f"INS-003 found {len(problems)} problem(s) with the all-custom wizard "
         "install:\n" + "\n".join(f"  - {problem}" for problem in problems))

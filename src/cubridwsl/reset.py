@@ -107,6 +107,29 @@ def find_residue(state: state_mod.MachineState,
     return found
 
 
+def residue_now(settings: dict[str, Any], *, expected_name: str | None = None
+                ) -> tuple[state_mod.MachineState, list[str]]:
+    """The machine as it is right now, and what is on it that must not be.
+
+    The same reading `ensure_clean` makes before deciding whether to uninstall,
+    exposed for the cases whose whole assertion is that nothing was installed --
+    a cancelled wizard, a command line the product rejects. Those cases must
+    never re-list what residue MEANS: a second list goes stale against this
+    module the first time an artifact is added here, and it goes stale silently,
+    still green.
+
+    A single reading, never a wait. Only positive conditions are ever waited
+    for: "still absent after five minutes" is evidence of patience, not of
+    correctness.
+
+    include_guest=False -- every question here is answered from Windows, and
+    running commands inside a distribution that should not exist costs a
+    timeout each to learn nothing.
+    """
+    state = state_mod.snapshot(settings, include_guest=False)
+    return state, find_residue(state, _candidate_install_dirs(state, expected_name))
+
+
 def stop_tray(note: Note | None = None) -> bool:
     """Stop the product's Tray before uninstalling it.
 
