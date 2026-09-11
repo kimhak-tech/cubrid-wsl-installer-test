@@ -48,7 +48,7 @@ from . import constants, distro, state as state_mod
 # state in the query rather than one we have to reverse-engineer.
 _MARKER = re.compile(r"<<([^<>]*)>>")
 
-# ...with one catch, found by the self-check rather than by a destructive run:
+# ...with one catch:
 # csql ECHOES the select expression as the column header, so the marker appears
 # TWICE and the first occurrence is not a value:
 #
