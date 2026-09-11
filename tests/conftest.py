@@ -72,8 +72,8 @@ def _case_number(item: pytest.Item) -> int:
     return int(match.group(1)) if match else 0
 
 
-def _group_key(item: pytest.Item) -> tuple[int, int, int, int]:
-    """(environment, machine state, observation before action, then case ID).
+def _group_key(item: pytest.Item) -> tuple[int, int, int]:
+    """(machine state, observation before action, then case ID).
 
     Sorted by the LAST fixture in INSTALL_FIXTURE_ORDER the test requests, not
     the first: INS-002 asks for BOTH installs, and what decides when it can run
@@ -81,13 +81,13 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int, int]:
     run it before INS-001 -- against a machine the silent install had not
     produced yet, diffing a snapshot that did not exist.
 
-    The third component is the workbook's observation-vs-action rule, made
+    The second component is the workbook's observation-vs-action rule, made
     executable. Within one machine state the cases that only READ what the
     installer left run before the cases that start, stop, connect or create --
     so an OPS case can never hand INS-002 a machine with the service stopped or
     a database it did not install.
 
-    The fourth runs the action cases in WORKBOOK ORDER. That is load-bearing:
+    The third runs the action cases in WORKBOOK ORDER. That is load-bearing:
     OPS-001 does not connect to anything, so the evidence that a service cycle
     is non-destructive is OPS-002 connecting immediately after it on the same
     machine, and OPS-004 replaces the engine so it has to come last.
@@ -100,22 +100,19 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int, int]:
     for and the markers it carries, so moving a file between folders cannot
     change when it runs.
     """
-    environment = 0 if item.get_closest_marker("environment") else 1
     action = 1 if item.get_closest_marker("action") else 0
     names = set(getattr(item, "fixturenames", ()))
     indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
                if fixture in names]
-    return (environment, max(indices) if indices else -1, action,
-            _case_number(item))
+    return (max(indices) if indices else -1, action, _case_number(item))
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Run the read-only self-checks before anything that installs.
+    """Run the cases in the order their machine states require.
 
-    `run-tests.ps1 all` otherwise takes the files in alphabetical order and
-    installs the product before the checks that prove the setup is sound have
-    run at all -- five minutes spent to reach a failure the first second could
-    have reported. The sort is stable, so nothing else moves.
+    Collection order is alphabetical by path, which says nothing about what a
+    case needs -- see `_group_key`. The sort is stable, so cases that share a
+    key keep their collection order.
     """
     items.sort(key=_group_key)
 
@@ -147,7 +144,7 @@ def settings() -> dict[str, Any]:
 def installer(request, settings) -> config_mod.InstallerPackage:
     """The bundle under test.
 
-    Resolved lazily, as a fixture, so the read-only environment check can run on
+    Resolved lazily, as a fixture, so the read-only environment checks can run on
     a machine that has no build at all -- only the tests that install need one.
     """
     try:

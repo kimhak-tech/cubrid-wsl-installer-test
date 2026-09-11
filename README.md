@@ -71,11 +71,12 @@ cubrid-wsl-installer-test/
 │   ├── verify.py              # Expected vs actual verification
 │   ├── distro.py              # WSL operations
 │   ├── reset.py               # Machine cleanup
-│   ├── preflight.py           # Environment checks
+│   ├── preflight.py           # Session preconditions: Windows, elevation, account
 │   └── config.py              # Configuration loading
 ├── tests/
 │   ├── conftest.py            # Shared fixtures: machine states, run report
-│   ├── test_environment.py    # Framework self-checks
+│   ├── environment_checks.py  # Not cases: is this machine ready to run them
+│   ├── framework_checks.py    # Not cases: do the framework's tools give right answers
 │   ├── INS/                   # Category 02, Installer Orchestration
 │   │   └── test_install_*.py
 │   └── OPS/                   # Category 03, CUBRID Operational
@@ -129,26 +130,27 @@ Two things to know about that path:
 
 - **Put it in `settings.local.toml`, not `settings.toml`.** The first is
   gitignored; the second is committed, so a path that exists only on your
-  machine would break every teammate's clone. The environment check enforces this.
+  machine would break every teammate's clone. The environment checks enforce this.
 - **Keep the installer's shipped filename.** The version fields are read *out of*
   the name, and INS-001 checks the CUBRID reported inside the distribution
   against them. A renamed file is refused rather than silently tested.
 
-Run the environment check before running installation tests:
+Then run the checks on their own:
 
 ```powershell
-.\run-tests.ps1 environment
+.\run-tests.ps1 checks
 ```
 
-It is read-only, needs no installed product, and takes seconds. If it fails,
-nothing after it is meaningful.
+They also run automatically at the start of every suite; running them alone is
+the quick way to check your setup. They are read-only, need no installed
+product, and take seconds. If they fail, nothing after them is meaningful.
 
 ---
 
 ## 5. Running Tests
 
 ```powershell
-.\run-tests.ps1 environment
+.\run-tests.ps1 checks
 .\run-tests.ps1 silent
 .\run-tests.ps1 ui
 .\run-tests.ps1 all
@@ -170,7 +172,10 @@ List every case without executing anything — this, not a table in this file, i
 the current inventory:
 
 ```powershell
-.\run-tests.ps1 -CollectOnly
+.\run-tests.ps1 -CollectOnly          # list every test case
+.\run-tests.ps1 checks -CollectOnly   # list the environment and framework checks
+.\run-tests.ps1 silent -CollectOnly   # list the silent test cases
+.\run-tests.ps1 ui -CollectOnly       # list the UI test cases
 ```
 
 What each case asserts is in its own file's docstring, under `Verifies:`.
@@ -183,15 +188,35 @@ while `/quiet` skips them, so a case that names one has to keep it. Cleanup
 always uninstalls `/quiet`, because a `/passive` uninstall draws a window the
 wizard driver cannot tell apart from the one it is about to open.
 
-The environment checks always run first, whichever suite you ask for, so a
-broken setup fails in a second rather than after a five-minute install.
+Every run, including a single `-Case` (but not `-CollectOnly`, which only
+lists), starts with two check files, once each:
+
+| File | Question | Fails when |
+|---|---|---|
+| `tests/environment_checks.py` | Is **this machine** ready to run the cases? | the installer path is wrong, WSL does not answer, a setting is missing |
+| `tests/framework_checks.py` | Do the **framework's own tools** give right answers? | a bug in `src/cubridwsl/` would mis-read the product on every machine |
+
+Both always run, so one run shows every setup problem, and a failure in either
+stops the run before anything is installed: a broken setup fails in a second
+rather than after a two-minute install. Neither is a test case -- their
+names do not match pytest's `test_*.py`, so they are only ever run by path -- and
+the run ends with separate counts:
+
+```text
+Environment checks : 6 passed, 0 failed, 0 skipped
+Framework checks   : 5 passed, 0 failed, 0 skipped
+Cases              : N passed, 0 failed, 0 skipped
+```
+
+Only the last line, and `junit.xml`, count workbook cases.
 
 Test results are stored under `reports/<timestamp>/`:
 
 | File | Contents |
 |---|---|
 | `run.json` | which bundle (path + SHA-256), which account, elevated or not, which mode, and what each install did |
-| `junit.xml` | machine-readable results |
+| `junit.xml` | machine-readable results, workbook cases only |
+| `environment-checks/`, `framework-checks/` | each check session's own `junit.xml` and `run.json` |
 | `install-*.log` | the installer's own logs, plus the MSI's |
 | `state-*.json` | the machine as the verification layer saw it |
 | `comparison-*.json` | every check, expected vs actual |
@@ -258,7 +283,8 @@ def test_ins_005_something(silent_install):
 | A registry path, option name or UI string | `constants.py` |
 | A new install-option combination | a copy of `constants.INSTALL_OPTIONS` plus one fixture in `conftest.py` |
 | An action against the *installed* product (start, stop, connect, query, create) | a method on `cubrid_cli.CubridCli`, and a case under `tests/OPS/` marked `action` |
-| A recorded product output format | a `parse_*` function in `state.py`, pinned by a self-check in `test_environment.py` |
+| A recorded product output format | a `parse_*` function in `state.py`; the cases exercise it against the real product -- no pasted sample |
+| A framework function every case reads the product through | a check in `tests/framework_checks.py`, fed input whose right answer is known |
 
 ### Architecture Rule
 

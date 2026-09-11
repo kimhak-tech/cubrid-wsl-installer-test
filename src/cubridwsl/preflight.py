@@ -65,7 +65,7 @@ def require_elevation(reason: str = INSTALL_REASON) -> None:
     """Demand elevation at the point of use.
 
     Called by the fixtures that genuinely need it rather than gating the whole
-    session, so the read-only self-check stays runnable from an ordinary shell.
+    session, so the read-only checks stay runnable from an ordinary shell.
     """
     if not is_elevated():
         raise RuntimeError(

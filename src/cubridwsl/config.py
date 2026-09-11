@@ -61,7 +61,7 @@ def load_settings(config_dir: Path | None = None) -> dict[str, Any]:
 def committed_installer_path(config_dir: Path | None = None) -> str:
     """`installer.path` as the COMMITTED settings.toml carries it.
 
-    Exists so the environment suite can catch a machine-specific path edited
+    Exists so the environment checks can catch a machine-specific path edited
     into the tracked file instead of settings.local.toml. That mistake works
     perfectly on the machine that makes it and hands everyone else a path that
     does not exist -- the worst shape a setup error can take.
