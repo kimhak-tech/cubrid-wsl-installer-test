@@ -441,6 +441,13 @@ TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 # The Tray executable, as installed. Named here because reset stops it before
 # uninstalling -- see reset.stop_tray().
 TRAY_EXE = "cubrid_tray_app.exe"
+TRAY_WINDOW_CLASS = "CUBRIDTrayApp"
+TRAY_ABOUT_TITLE = "About CUBRID Service Tray"
+TRAY_MENU_ITEMS = ("About", "CUBRID Start", "CUBRID Stop", "Guide", "Exit")
+TRAY_TIP_RUNNING = "CUBRID Service - Running"
+TRAY_TIP_STOPPED = "CUBRID Service - Stopped"
+TRAY_TIP_ERROR = "CUBRID Service - Error"
+TRAY_GUIDE_FILE = "cubrid_guide.html"
 
 # Buttons on the environment-check warning dialogs.
 OK_BUTTONS = ("OK", "확인")
