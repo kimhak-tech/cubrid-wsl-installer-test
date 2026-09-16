@@ -69,18 +69,40 @@ INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install", "silent_wsl1_install")
 
 
-# The case ID carried in a test function name, e.g. test_ops_002_... -> 2.
-_CASE_ID = re.compile(r"test_[a-z]+_(\d+)_")
+# The category and case ID carried in a test function name,
+# e.g. test_ops_002_... -> ("ops", 2).
+_CASE_ID = re.compile(r"test_([a-z]+)_(\d+)_")
+
+# Action categories that share one machine state, in the order they must run.
+# TRA before OPS because OPS-004 replaces the CUBRID engine and cannot be undone,
+# so nothing may follow it on that machine; TRA restores the service it stopped,
+# so OPS-001 still starts from a running one. A category absent from this tuple
+# sorts between them rather than last, which is the safe default: last is the one
+# slot that is already spoken for.
+ACTION_CATEGORY_ORDER = ("tra", "ops")
 
 
 def _case_number(item: pytest.Item) -> int:
     """The workbook case number in the test's name, or 0 if it carries none."""
     match = _CASE_ID.match(item.name)
-    return int(match.group(1)) if match else 0
+    return int(match.group(2)) if match else 0
+
+
+def _category_rank(item: pytest.Item) -> int:
+    """Where this case's category sorts among the action categories.
+
+    Keyed off the case ID in the NAME, never the folder, for the same reason
+    every other component here is -- see `_group_key`.
+    """
+    match = _CASE_ID.match(item.name)
+    category = match.group(1) if match else ""
+    if category in ACTION_CATEGORY_ORDER:
+        return ACTION_CATEGORY_ORDER.index(category)
+    return len(ACTION_CATEGORY_ORDER) - 1
 
 
 def _group_key(item: pytest.Item) -> tuple[int, int, int]:
-    """(machine state, observation before action, then case ID).
+    """(machine state, observation before action, category, then case ID).
 
     Sorted by the LAST fixture in INSTALL_FIXTURE_ORDER the test requests, not
     the first: INS-002 asks for BOTH installs, and what decides when it can run
@@ -101,12 +123,18 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     so an OPS case can never hand INS-002 a machine with the service stopped or
     a database it did not install.
 
-    The third runs the action cases in WORKBOOK ORDER. That is load-bearing:
-    OPS-001 does not connect to anything, so the evidence that a service cycle
-    is non-destructive is OPS-002 connecting immediately after it on the same
-    machine, and OPS-004 replaces the engine so it has to come last.
+    The third keeps two action categories sharing one machine from interleaving
+    by case number -- TRA and OPS both run on `silent_install`, and sorting those
+    on the number alone would step TRA-001, OPS-001, TRA-002, OPS-002 through a
+    module-scoped Tray fixture that is torn down and relaunched each time. See
+    ACTION_CATEGORY_ORDER for why TRA goes first.
 
-    Both of the last two components exist because the alternative is collection
+    The fourth runs the cases within a category in WORKBOOK ORDER. That is
+    load-bearing: OPS-001 does not connect to anything, so the evidence that a
+    service cycle is non-destructive is OPS-002 connecting immediately after it
+    on the same machine, and OPS-004 replaces the engine so it has to come last.
+
+    Those three components exist because the alternative is collection
     order, where `tests/INS/` sorts ahead of `tests/OPS/` because I precedes O,
     and `test_create_database.py` ahead of `test_service_lifecycle.py` because c
     precedes s -- neither of which has anything to do with what the cases need.
@@ -118,7 +146,8 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     names = set(getattr(item, "fixturenames", ()))
     indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
                if fixture in names]
-    return (max(indices) if indices else -1, action, _case_number(item))
+    return (max(indices) if indices else -1, action, _category_rank(item),
+            _case_number(item))
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

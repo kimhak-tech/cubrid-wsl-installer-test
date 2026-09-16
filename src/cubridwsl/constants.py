@@ -474,6 +474,19 @@ TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 # uninstalling -- see reset.stop_tray().
 TRAY_EXE = "cubrid_tray_app.exe"
 
+# The popup menu, its About dialog and the guide it opens. The menu labels are
+# what the Tray appends at ShowContextMenu(); the driver matches on them because
+# no persistent HMENU exists to index by command ID from outside the process.
+TRAY_ABOUT_TITLE = "About CUBRID Service Tray"
+TRAY_MENU_ITEMS = ("About", "CUBRID Start", "CUBRID Stop", "Guide", "Exit")
+TRAY_GUIDE_FILE = "cubrid_guide.html"
+
+# The notification-area tooltip, which is the only place the Tray REPORTS the
+# service state it polled. Readable through UI Automation only.
+TRAY_TIP_RUNNING = "CUBRID Service - Running"
+TRAY_TIP_STOPPED = "CUBRID Service - Stopped"
+TRAY_TIP_ERROR = "CUBRID Service - Error"
+
 # Buttons on the environment-check warning dialogs.
 OK_BUTTONS = ("OK", "확인")
 

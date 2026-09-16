@@ -6,6 +6,7 @@
         .\run-tests.ps1 checks        # the two check files only, read-only (default)
         .\run-tests.ps1 silent        # every case with no UI dependency  DESTRUCTIVE
         .\run-tests.ps1 ui            # every case driven through the wizard  DESTRUCTIVE
+        .\run-tests.ps1 tray          # control tray functionality  DESTRUCTIVE
         .\run-tests.ps1 all           # both  DESTRUCTIVE
 
     Every run starts with tests/environment_checks.py (is this machine ready?)
@@ -26,7 +27,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('checks', 'silent', 'ui', 'all')]
+    [ValidateSet('checks', 'silent', 'ui', 'tray', 'all')]
     [string]$Suite = 'checks',
 
     # A workbook case ID (-Case INS-001) or a whole category (-Case INS). Case
@@ -122,6 +123,7 @@ Settings > Apps > Advanced app settings > App execution aliases.
             }
             'silent' { $selection = @('-m', 'silent') }
             'ui'     { $selection = @('-m', 'ui') }
+            'tray'   { $selection = @('-m', 'tray') }
             'all'    { $selection = @() }
         }
     }

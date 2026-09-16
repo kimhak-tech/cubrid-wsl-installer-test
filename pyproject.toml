@@ -30,6 +30,7 @@ addopts = "-ra --strict-markers -p no:cacheprovider"
 markers = [
     "silent: driven through the installer's unattended CLI",
     "ui: driven through the wizard UI (pywinauto)",
+    "tray: drives the installed Windows notification-area application",
     "destructive: installs or uninstalls the product; needs an elevated shell",
     "action: starts, stops, connects, queries or creates against the installed product; sorted after the observation cases sharing its machine state",
 ]

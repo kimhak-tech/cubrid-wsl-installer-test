@@ -175,6 +175,7 @@ product, and take seconds. If they fail, nothing after them is meaningful.
 .\run-tests.ps1 checks
 .\run-tests.ps1 silent
 .\run-tests.ps1 ui
+.\run-tests.ps1 tray
 .\run-tests.ps1 all
 ```
 
@@ -198,6 +199,7 @@ the current inventory:
 .\run-tests.ps1 checks -CollectOnly   # list the environment and framework checks
 .\run-tests.ps1 silent -CollectOnly   # list the silent test cases
 .\run-tests.ps1 ui -CollectOnly       # list the UI test cases
+.\run-tests.ps1 tray -CollectOnly     # list the Control Tray test cases
 ```
 
 What each case asserts is in its own file's docstring, under `Verifies:`.
@@ -299,7 +301,7 @@ def test_ins_005_something(silent_install):
 
 | You are adding | It goes in |
 |---|---|
-| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/LCM/`) — no new fixture |
+| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/TRA/`, `tests/LCM/`) — no new fixture |
 | A fact every installation should satisfy | a `Check` in `verify.CHECKS` — both drivers pick it up |
 | Something new read from the machine | the matching `read_*` in `state.py` |
 | A registry path, option name or UI string | `constants.py` |
