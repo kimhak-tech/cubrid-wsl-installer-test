@@ -59,12 +59,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # INS-001's own assertions read the live disk (the uninstall string names a file
 # that must exist), so they have to run before the silent install replaces it.
 #
-# No LCM case is here, and that is deliberate: all four install and uninstall
-# in their own test bodies. Asking for no machine-state fixture is what places
-# them AHEAD of every case that provisions one, and for LCM-001 and LCM-002 that
-# is load-bearing rather than tidy -- they REMOVE the product, so running after
-# `silent_install` would take the shared machine out from under every OPS case.
-# See `_group_key`.
+# No LCM case is here, and that is deliberate. LCM-001 and LCM-002 install and
+# uninstall in their own test bodies, because removing the product is their
+# subject; LCM-003 and LCM-004 share `tests/LCM/conftest.py`'s module-scoped
+# `suite_installation`, which is not one of these names either. Asking for no
+# fixture in THIS tuple is what places them all AHEAD of every case that
+# provisions a shared machine, and for LCM-001 and LCM-002 that is load-bearing
+# rather than tidy -- they REMOVE the product, so running after `silent_install`
+# would take the shared machine out from under every OPS case. See `_group_key`.
 INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install", "silent_wsl1_install")
 
@@ -252,9 +254,16 @@ def run_dir(request) -> Path:
     return directory
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def note() -> Callable[[str], None]:
-    """Record a line that must appear even when the test passes."""
+    """Record a line that must appear even when the test passes.
+
+    Session-scoped although it holds no per-test state -- it hands back one
+    module-level function -- so that a fixture of ANY scope can request it. A
+    function-scoped `note` cannot be used by the provisioning fixtures, and a
+    provisioning fixture that cannot talk is three minutes of installing that a
+    passing run leaves unaccounted for.
+    """
     return _note
 
 

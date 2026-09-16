@@ -34,42 +34,35 @@ pytestmark = [pytest.mark.destructive]
 # =============================================================================
 # LCM-003: A different bundle launched over an existing installation
 # =============================================================================
-# Install Bundle A, launch Bundle B through the UI, and confirm the installer
-# blocks it, tells the user why, and leaves Bundle A's installation alone.
+# With Bundle A installed, launch Bundle B through the UI, and confirm the
+# installer blocks it, tells the user why, and leaves Bundle A's installation
+# alone.
 
 @pytest.mark.ui
-def test_lcm_003_a_different_bundle_is_blocked(installer, alternate_installer,
+def test_lcm_003_a_different_bundle_is_blocked(suite_installation,
+                                               alternate_installer,
                                                settings, run_dir, note):
+    wsl_name = suite_installation.wsl_name
 
     # ----------------------------------------------------------------- #
-    # 1. Clean up -- remove anything an earlier run left behind
+    # 1. Baseline -- what "unchanged" is measured against
     # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "01-cleanup.log", note=note)
-
-    # ----------------------------------------------------------------- #
-    # 2. Set up -- install Bundle A, so there is something to refuse
-    # ----------------------------------------------------------------- #
-    silent.install_cubrid_wsl(installer, settings, run_dir / "02-setup.log", note=note)
-
-    if not registry.exists():
-        pytest.fail("CUBRID for WSL is not installed after the set-up step")
-
-    wsl_name = registry.wsl_name()
-
-    # What "unchanged" is measured against, read as VALUES while the machine is
-    # still exactly the one Bundle A produced.
+    # Read as VALUES, and read HERE rather than in the fixture, so they
+    # describe the machine as THIS case found it. The suite installs once, so
+    # LCM-004 measures against what LCM-003 left behind.
     installed_registry = registry.values()
     installed_entry = apps.read()
-    note(f"  LCM-003-bundle A   : {installer.path.name} -> distro={wsl_name!r}")
+    note(f"  LCM-003-bundle A   : {suite_installation.package.path.name} "
+         f"-> distro={wsl_name!r}")
     note(f"  LCM-003-bundle B   : {alternate_installer.describe()}")
 
     # ----------------------------------------------------------------- #
-    # 3. Action -- launch Bundle B through the UI
+    # 2. Action -- launch Bundle B through the UI
     # ----------------------------------------------------------------- #
     # No switches: the double-click the workbook describes. Burn's gate fires
     # only on an INSTALL action, which a bare launch performs.
     result = wizard.install_cubrid_wsl(alternate_installer, settings,
-                                       run_dir / "03-bundle-b.log", note=note)
+                                       run_dir / "lcm-003-bundle-b.log", note=note)
     for step in result.steps:
         note(f"  LCM-003-step       : {step.name:<18} [{step.backend}] "
              f"{step.action} ({step.seconds:.0f}s)")
@@ -78,10 +71,10 @@ def test_lcm_003_a_different_bundle_is_blocked(installer, alternate_installer,
     if result.timed_out:
         pytest.fail(f"launching Bundle B timed out after {result.duration_seconds:.0f}s, "
                     "so it never reached a page that waits for the user -- see "
-                    "03-bundle-b.log")
+                    "lcm-003-bundle-b.log")
 
     # ----------------------------------------------------------------- #
-    # 4. Verification
+    # 3. Verification
     # ----------------------------------------------------------------- #
     # What the page is expected to say. Both are lists -- every language the
     # bundle can be running in, since it follows the system locale.
@@ -129,51 +122,39 @@ def test_lcm_003_a_different_bundle_is_blocked(installer, alternate_installer,
         "CUBRID is not running inside the distribution after the refused "
         f"install. Status: {cubrid.service_status(wsl_name, settings)}")
 
-    # ----------------------------------------------------------------- #
-    # 5. Clean up -- remove the installation this case set up
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "04-cleanup.log", note=note)
+    # No clean-up here: `suite_installation` owns this machine and removes it
+    # after the last case in this module.
 
 
 # =============================================================================
 # LCM-004: A different bundle run unattended over an existing installation
 # =============================================================================
-# Install Bundle A, run Bundle B silently, and confirm the installer rejects it
-# without drawing any UI and without touching Bundle A's installation.
+# With Bundle A installed, run Bundle B silently, and confirm the installer
+# rejects it without drawing any UI and without touching Bundle A's
+# installation.
 
 @pytest.mark.silent
-def test_lcm_004_a_different_bundle_is_rejected_silently(installer,
+def test_lcm_004_a_different_bundle_is_rejected_silently(suite_installation,
                                                          alternate_installer,
                                                          settings, run_dir, note):
+    wsl_name = suite_installation.wsl_name
 
     # ----------------------------------------------------------------- #
-    # 1. Clean up -- remove anything an earlier run left behind
+    # 1. Baseline -- what "unchanged" is measured against
     # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "01-cleanup.log", note=note)
-
-    # ----------------------------------------------------------------- #
-    # 2. Set up -- install Bundle A, so there is something to refuse
-    # ----------------------------------------------------------------- #
-    silent.install_cubrid_wsl(installer, settings, run_dir / "02-setup.log", note=note)
-
-    if not registry.exists():
-        pytest.fail("CUBRID for WSL is not installed after the set-up step")
-
-    # What "unchanged" is measured against, read while the machine is still
-    # exactly the one Bundle A produced.
-    wsl_name = registry.wsl_name()
     installed_registry = registry.values()
     installed_entry = apps.read()
-    note(f"  LCM-004-bundle A   : {installer.path.name} -> distro={wsl_name!r}")
+    note(f"  LCM-004-bundle A   : {suite_installation.package.path.name} "
+         f"-> distro={wsl_name!r}")
     note(f"  LCM-004-bundle B   : {alternate_installer.describe()}")
 
     # ----------------------------------------------------------------- #
-    # 3. Action -- run Bundle B unattended
+    # 2. Action -- run Bundle B unattended
     # ----------------------------------------------------------------- #
     # /quiet with no property overrides: a duplicate install is refused before
     # any property is read, so passing some would only obscure which run failed.
     result = silent.install_cubrid_wsl(alternate_installer, settings,
-                                       run_dir / "03-bundle-b.log", note=note)
+                                       run_dir / "lcm-004-bundle-b.log", note=note)
     note(f"  LCM-004-result     : {result.describe()}")
     note(f"  LCM-004-command    : {result.command}")
 
@@ -181,10 +162,10 @@ def test_lcm_004_a_different_bundle_is_rejected_silently(installer,
     # install budget is not being refused -- it is doing something else.
     if result.timed_out:
         pytest.fail(f"running Bundle B timed out after {result.duration_seconds:.0f}s, "
-                    "so it was not being refused -- see 03-bundle-b.log")
+                    "so it was not being refused -- see lcm-004-bundle-b.log")
 
     # ----------------------------------------------------------------- #
-    # 4. Verification
+    # 3. Verification
     # ----------------------------------------------------------------- #
     # Recorded as EVIDENCE, not asserted: whether Burn writes the localized
     # message under /quiet, and to which log, has never been observed on a real
@@ -229,7 +210,5 @@ def test_lcm_004_a_different_bundle_is_rejected_silently(installer,
         "CUBRID is not running inside the distribution after the refused "
         f"install. Status: {cubrid.service_status(wsl_name, settings)}")
 
-    # ----------------------------------------------------------------- #
-    # 5. Clean up -- remove the installation this case set up
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "04-cleanup.log", note=note)
+    # No clean-up here: `suite_installation` owns this machine and removes it
+    # after the last case in this module.
