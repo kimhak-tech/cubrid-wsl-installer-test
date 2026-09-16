@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import config as config_mod, constants, preflight
+from ..windows import apps, registry
 
 
 class WizardError(RuntimeError):
@@ -142,6 +143,19 @@ def find_window(titles: list[str], *, timeout: float = 120, interval: float = 0.
         + ("\n".join(f"  {t!r} [{c}]" for t, c in sorted(seen.items())) or "  (none)"))
 
 
+def setup_windows_open(titles: list[str]) -> list[tuple[int, str]]:
+    """Every setup window on screen right now, as (handle, title).
+
+    The reading behind `assert_no_setup_window`, exposed because one case needs
+    it as an OBSERVATION rather than as a precondition: a silent run must draw
+    no UI at all, and that is a question about the screen after the run, not a
+    reason to refuse to start.
+    """
+    patterns = [re.compile(f".*{re.escape(t)}.*") for t in titles]
+    return [(handle, title) for handle, title, _class in _enumerate_windows()
+            if title and any(rx.search(title) for rx in patterns)]
+
+
 def assert_no_setup_window(titles: list[str], *, timeout: float = 60.0,
                            interval: float = 1.0,
                            note: Callable[[str], None] | None = None) -> None:
@@ -165,11 +179,9 @@ def assert_no_setup_window(titles: list[str], *, timeout: float = 60.0,
     mid-operation is how a machine ends up half-installed.
     """
     say = note or (lambda _text: None)
-    patterns = [re.compile(f".*{re.escape(t)}.*") for t in titles]
 
     def _stale() -> list[tuple[int, str]]:
-        return [(h, t) for h, t, _c in _enumerate_windows()
-                if t and any(rx.search(t) for rx in patterns)]
+        return setup_windows_open(titles)
 
     deadline = time.time() + timeout
     stale = _stale()
@@ -488,6 +500,12 @@ class WizardResult:
     error: str | None = None
     returncode: int | None = None
     log_path: Path | None = None
+    # What the walk OBSERVED, as opposed to what it did. Used by the paths whose
+    # subject is a message on screen rather than a machine change: a case cannot
+    # assert the text Burn showed the user unless the driver carries it out.
+    # Free-form on purpose -- each walk names its own keys, and a case reads the
+    # ones its own driver sets.
+    detail: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -508,6 +526,7 @@ class WizardResult:
         return {"action": self.action,
                 "duration_seconds": round(self.duration_seconds, 1),
                 "ok": self.ok, "timed_out": self.timed_out, "error": self.error,
+                "detail": dict(self.detail),
                 "steps": [s.__dict__ for s in self.steps]}
 
 
@@ -1054,4 +1073,336 @@ def cancel(package: config_mod.InstallerPackage, log_path: Path, *,
 
     _record_bundle_process(result, process)
     result.duration_seconds = time.monotonic() - started
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# The maintenance path -- uninstalling through the bundle's own UI
+#
+# Nothing below touches an MSI dialog, and that is not an oversight. An
+# uninstall runs InstallExecuteSequence only, so the wizard pages never appear:
+# the whole flow happens inside the single WixStdBA bundle window, which swaps
+# its Modify page for Progress and then for Success or Failure. So the driver
+# stays on ONE window and identifies the page by what is visible on it.
+#
+# The Success and Failure pages both carry a `&Close`, so the button cannot say
+# which of them ended the run. Their HEADERS can, and those headers are unnamed
+# theme controls -- see constants.WIZARD_STRINGS' bundle_success_header.
+# --------------------------------------------------------------------------- #
+def _visible_text(win, labels: list[str]) -> str:
+    """The text of the first VISIBLE static control matching any label.
+
+    Empty when none matches, which for a page of the bundle window means that
+    page is not the one on screen -- every page's controls exist at all times.
+    """
+    matches = _matching_controls(win, _label_regex(labels), ("Static", "Text"),
+                                 require_enabled=False)
+    return (matches[0].window_text() or "").strip() if matches else ""
+
+
+def _bundle_page(window: Window, probe: Callable[[Any], bool]) -> bool:
+    """Whether this is the bundle window, currently showing the wanted page.
+
+    MSI dialogs are rejected by class for the reason CustomUserExit exists:
+    they can carry the bundle window's title character for character.
+    """
+    if (window.class_name or "").startswith(constants.MSI_DIALOG_CLASS_PREFIX):
+        return False
+    try:
+        win, _ = _connect(window.handle)
+    except WizardError:
+        return False
+    try:
+        return probe(win)
+    except Exception:
+        return False
+
+
+def _is_maintenance_page(window: Window) -> bool:
+    """The bundle window with an Uninstall button actually on screen.
+
+    Burn creates its window before deciding which page to show, so accepting it
+    on the title alone would attach to a window whose Modify page is not up yet
+    and report a missing button.
+    """
+    return _bundle_page(window, lambda win: bool(_matching_controls(
+        win, _label_regex(constants.ui_strings("bundle_btn_uninstall")),
+        ("Button",))))
+
+
+def _is_bundle_outcome_page(window: Window) -> bool:
+    """The bundle window once it has reached Success or Failure."""
+    return _bundle_page(window, lambda win: bool(
+        _visible_text(win, constants.ui_strings("bundle_success_header"))
+        or _visible_text(win, constants.ui_strings("bundle_failure_header"))))
+
+
+def uninstall(package: config_mod.InstallerPackage, log_path: Path, *,
+              timeout: int, step_timeout: float = 120,
+              note: Callable[[str], None] | None = None) -> WizardResult:
+    """Remove the product the way a user does: re-run the bundle, click Uninstall.
+
+    The bundle is launched with no switches at all. On a machine that already
+    carries the product Burn answers with its MAINTENANCE page instead of the
+    install page, and because the bundle is DisableModify=yes the page offers
+    exactly one action. That substitution IS the duplicate-install detection in
+    the UI path, so the step below records which page answered rather than
+    assuming the button will be there.
+
+    Like every driver here this one only DRIVES. Whether the machine is clean
+    afterwards is the case's question, and reset.residue_now answers it.
+    """
+    say = note or (lambda _text: None)
+    preflight.require_elevation(preflight.WIZARD_REASON)
+
+    strings = constants.ui_strings
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = WizardResult(action="wizard-uninstall", duration_seconds=0.0,
+                          log_path=log_path)
+    process: subprocess.Popen | None = None
+    started = time.monotonic()
+    deadline = started + timeout
+    step = _stepper(result, deadline, step_timeout, say)
+    outcome: dict[str, str] = {}
+
+    try:
+        assert_no_setup_window(strings("bundle_title"), note=say)
+        # No /uninstall switch: the point of this case is what the bundle does
+        # when it is DOUBLE-CLICKED on an installed machine. Passing the switch
+        # would drive the removal the silent path drives and prove nothing about
+        # the UI. /log is still needed -- the bundle is Log Disable="yes".
+        process = subprocess.Popen([str(package.path), "/log", str(log_path)])
+
+        def _maintenance(win):
+            header = _visible_text(win, strings("modify_header"))
+            say(f"    wizard   : the bundle answered with {header!r} rather "
+                "than its install page")
+            return (f"page={header!r} + "
+                    + click_button(win, strings("bundle_btn_uninstall")))
+
+        step("maintenance-page", strings("bundle_title"), _maintenance,
+             accept=_is_maintenance_page)
+
+        def _outcome(win):
+            failure = _visible_text(win, strings("bundle_failure_header"))
+            outcome["header"] = failure or _visible_text(
+                win, strings("bundle_success_header"))
+            outcome["page"] = "failure" if failure else "success"
+            # Closed before the failure is raised, never after. A bundle window
+            # left open makes the NEXT run refuse to start, so a failed
+            # uninstall would cost two red cases instead of one.
+            return (f"{outcome['page']} page ({outcome['header']!r}) + "
+                    + click_button(win, strings("bundle_btn_close")))
+
+        # Where the WSL distribution is unregistered, so it gets what is left of
+        # the budget rather than a per-step slice.
+        remaining = max(60.0, deadline - time.monotonic())
+        step("uninstall-outcome", strings("bundle_title"), _outcome,
+             wait=remaining, accept=_is_bundle_outcome_page)
+
+        if outcome.get("page") == "failure":
+            raise WizardError(
+                f"the bundle ended on its failure page ({outcome['header']!r}). "
+                f"The log at {log_path} carries the reason. The machine is "
+                "very likely half-removed, so read the case's residue list "
+                "before running anything else on this host.")
+
+    except TimeoutError as exc:
+        result.timed_out = True
+        result.error = str(exc)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+
+    _record_bundle_process(result, process)
+    result.duration_seconds = time.monotonic() - started
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Launching the bundle over an installation it did not perform
+#
+# Burn's own gate, from bundle.wxs:
+#
+#   <bal:Condition Message="#(loc.FailureAlreadyInstalled)">
+#       WixBundleAction <> 5 OR NOT MsiInstalledVersion OR WixBundleInstalled
+#   </bal:Condition>
+#
+# It refuses only an INSTALL action (5) on a machine where the MSI is present
+# and THIS bundle is not the registered one. Two things follow, and both decide
+# what this driver can be pointed at:
+#
+# * the byte-identical .exe that performed the install answers with its
+#   MAINTENANCE page instead -- that is `uninstall()` above, not this;
+# * every other build is refused, INCLUDING one of the same version, because
+#   the BundleId is regenerated per build while Bundle Version is hardcoded.
+# --------------------------------------------------------------------------- #
+def _text_containing(win, fragments: list[str]) -> str:
+    """The full text of the first control whose text CONTAINS any fragment.
+
+    Not filtered to visible controls, and not to a class. Burn fills its failure
+    message into a Hypertext it populates at RUNTIME -- the theme gives that
+    control no text of its own -- so nothing else in the window can carry these
+    fragments, and matching on the text alone avoids depending on how a
+    Hypertext reports its class or its visibility.
+    """
+    for control in win.children():
+        try:
+            text = (control.window_text() or "").strip()
+        except Exception:
+            continue
+        if any(fragment in text for fragment in fragments):
+            return text
+    return ""
+
+
+def _bundle_page_name(win) -> str:
+    """Which page the bundle window is showing, or "" while it has not decided.
+
+    Every page of WixStdBA lives in the same window, so this is the only way to
+    ask. Named rather than tested for one expected page: a walk that waits only
+    for the page it wants sits through its whole timeout when the product does
+    something else, and then reports the page it wanted as missing instead of
+    the page that is actually on screen.
+    """
+    strings = constants.ui_strings
+    if _visible_text(win, strings("bundle_failure_header")):
+        return "failure"
+    if _visible_text(win, strings("bundle_success_header")):
+        return "success"
+    if _visible_text(win, strings("modify_header")):
+        return "maintenance"
+    # Last, and by a BUTTON: the install page is the one page of this theme with
+    # no header text of its own. Progress matches nothing, which is what keeps
+    # the wait going while the bundle is still working.
+    if _matching_controls(win, _label_regex(strings("bundle_btn_install")),
+                          ("Button",)):
+        return "install"
+    return ""
+
+
+def _is_bundle_decided(window: Window) -> bool:
+    """The bundle window, once it is showing a page that waits for the user."""
+    return _bundle_page(window, lambda win: bool(_bundle_page_name(win)))
+
+
+def install_cubrid_wsl(package: config_mod.InstallerPackage,
+                       settings: dict[str, Any], log_path: Path, *,
+                       step_timeout: float = 120,
+                       note: Callable[[str], None] | None = None) -> WizardResult:
+    """Run a bundle's install path through the UI and report where it landed.
+
+    The counterpart to `silent.install_cubrid_wsl`: same verb, same arguments,
+    the other route.
+
+    It does not presume the install succeeds. The driver reads which page
+    answered and the message on it into `result.detail`, and the CASE decides
+    whether that was the right answer -- so a bundle that wrongly offered to
+    install over an existing product reports "install page" rather than a
+    missing failure page, and LCM-003 can require "failure" where an install
+    case would require "success".
+
+    `result.detail` carries:
+        page     "failure" | "success" | "maintenance" | "install"
+        message  the full text of the control carrying the already-installed
+                 message, or "" when no control carried it
+
+    Whatever page answers is CLOSED before returning. All four of this theme's
+    pages label that button `&Close`, so one click dismisses any of them, and a
+    bundle window left open makes the next run refuse to start.
+
+    ONE ASYMMETRY WITH `silent.install_cubrid_wsl`, stated rather than hidden:
+    that one waits for the install to finish landing (demodb, the Tray, the
+    CUBRID service) and this one does not. No caller has yet needed a wizard
+    install to SUCCEED -- LCM-003 requires a refusal -- so the wait would be
+    speculative duplication of silent's. When an install case migrates and needs
+    it, move that wait into one place both drivers call rather than copying it.
+    """
+    say = note or (lambda _text: None)
+    preflight.require_elevation(preflight.WIZARD_REASON)
+
+    strings = constants.ui_strings
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    result = WizardResult(action="wizard-install", duration_seconds=0.0,
+                          log_path=log_path)
+    process: subprocess.Popen | None = None
+    started = time.monotonic()
+    timeout = settings["timeouts"]["install_seconds"]
+    step = _stepper(result, started + timeout, step_timeout, say)
+
+    try:
+        assert_no_setup_window(strings("bundle_title"), note=say)
+        # No switches beyond /log: this is the double-click the workbook
+        # describes, and the gate is on the INSTALL action, which is what a
+        # bare launch performs.
+        process = subprocess.Popen([str(package.path), "/log", str(log_path)])
+
+        def _verdict(win):
+            page = _bundle_page_name(win)
+            result.detail["page"] = page
+            # The page NAME is what a case asserts on -- it is the same word in
+            # every locale. The header is the product's own text, kept beside it
+            # as evidence, the way the uninstall walk keeps it.
+            result.detail["header"] = (
+                _visible_text(win, strings("bundle_failure_header"))
+                or _visible_text(win, strings("bundle_success_header")))
+            result.detail["message"] = _text_containing(
+                win, strings("already_installed_message"))
+            say(f"    wizard   : the bundle answered with its {page} page "
+                f"({result.detail['header']!r})")
+            if result.detail["message"]:
+                say(f"    wizard   : message -> {result.detail['message']!r}")
+            return f"page={page} + " + click_button(win, strings("bundle_btn_close"))
+
+        step("bundle-verdict", strings("bundle_title"), _verdict,
+             accept=_is_bundle_decided)
+
+    except TimeoutError as exc:
+        result.timed_out = True
+        result.error = str(exc)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+
+    _record_bundle_process(result, process)
+    result.duration_seconds = time.monotonic() - started
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# The verbs a test calls
+#
+# The walks above report what they SAW. These pair a walk with the run's
+# configured timeout, and -- where it makes sense -- with a wait for the machine
+# to settle afterwards, so a case calling one is never racing a change that has
+# not landed. They judge nothing either way.
+# --------------------------------------------------------------------------- #
+def uninstall_cubrid_wsl(package: config_mod.InstallerPackage,
+                         settings: dict[str, Any], log_path: Path, *,
+                         note: Callable[[str], None] | None = None
+                         ) -> WizardResult:
+    """Re-run THIS bundle, click through its Uninstall, and wait for the removal.
+
+    The file matters, not the version. Burn decides between offering
+    maintenance and refusing on `WixBundleInstalled` -- is THIS bundle the
+    registered one -- and regenerates the BundleId on every build while
+    `Bundle Version` stays 1.0.0. So the byte-identical .exe that installed the
+    product gets the maintenance page, and ANY other build, a rebuild from
+    identical source included, is refused instead.
+
+    Pass the bundle the product was installed FROM. Anything else exercises
+    LCM-003's subject, not this one.
+    """
+    say = note or (lambda _text: None)
+    # Captured before the walk: the uninstall removes the key that names the
+    # distribution, and the wait afterwards has to know which one to watch.
+    name = registry.wsl_name()
+
+    result = uninstall(package, log_path,
+                       timeout=settings["timeouts"]["uninstall_seconds"],
+                       note=say)
+    say(f"  wizard     : {result.describe()}")
+
+    # Even a FAILED walk waits. A cancelled or half-finished uninstall still
+    # leaves the machine changing, and a case reading it the instant the walk
+    # gave up would report a mid-removal machine as the product's teardown.
+    apps.wait_until_removed(name, note=say)
     return result

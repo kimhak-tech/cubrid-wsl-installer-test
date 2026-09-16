@@ -57,16 +57,26 @@ def test_the_installer_path_is_not_in_the_committed_config(note):
     Put it in the tracked settings.toml instead and it works on your machine
     while handing every teammate a path that does not exist -- and the
     repository grows a reference to your D: drive.
+
+    Checks EVERY machine-specific installer key, not just `path` -- Bundle B's
+    `alternate_path` is one too. Driven off
+    config.MACHINE_SPECIFIC_INSTALLER_KEYS rather than naming them here, so a
+    bundle added to the config later is covered without anyone remembering to
+    edit this file. The name stays singular because it is the name this check
+    has carried since it shipped, and renaming it would move it in junit.xml
+    and in everyone's `-k` filters to buy nothing.
     """
-    committed = config_mod.committed_installer_path()
-    assert not committed, (
-        f"config/settings.toml (which IS committed) sets installer.path to "
-        f"{committed!r}.\nMove it into config/settings.local.toml, which is "
-        "gitignored and merged over it:\n\n"
-        "  [installer]\n"
-        f'  path = "{committed}"\n\n'
-        "and set the tracked file back to an empty path.")
-    note("  installer  : path comes from settings.local.toml, as it should")
+    for key in config_mod.MACHINE_SPECIFIC_INSTALLER_KEYS:
+        committed = config_mod.committed_installer_path(key)
+        assert not committed, (
+            f"config/settings.toml (which IS committed) sets installer.{key} "
+            f"to {committed!r}.\nMove it into config/settings.local.toml, "
+            "which is gitignored and merged over it:\n\n"
+            "  [installer]\n"
+            f'  {key} = "{committed}"\n\n'
+            "and set the tracked file back to an empty path.")
+    note(f"  installer  : {', '.join(config_mod.MACHINE_SPECIFIC_INSTALLER_KEYS)} "
+         "come from settings.local.toml, as they should")
 
 
 def test_wsl_responds_and_its_output_decodes(note):

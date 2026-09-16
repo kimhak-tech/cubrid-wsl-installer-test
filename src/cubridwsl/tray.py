@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .. import constants
+from . import constants
 
 
 class TrayError(RuntimeError):

@@ -58,22 +58,53 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # against the one INS-001 left, so the wizard install must happen FIRST -- and
 # INS-001's own assertions read the live disk (the uninstall string names a file
 # that must exist), so they have to run before the silent install replaces it.
+#
+# No LCM case is here, and that is deliberate. LCM-001 and LCM-002 install and
+# uninstall in their own test bodies, because removing the product is their
+# subject; LCM-003 and LCM-004 share `tests/LCM/conftest.py`'s module-scoped
+# `suite_installation`, which is not one of these names either. Asking for no
+# fixture in THIS tuple is what places them all AHEAD of every case that
+# provisions a shared machine, and for LCM-001 and LCM-002 that is load-bearing
+# rather than tidy -- they REMOVE the product, so running after `silent_install`
+# would take the shared machine out from under every OPS case. See `_group_key`.
 INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install", "silent_wsl1_install")
 
 
-# The case ID carried in a test function name, e.g. test_ops_002_... -> 2.
-_CASE_ID = re.compile(r"test_[a-z]+_(\d+)_")
+# The category and case ID carried in a test function name,
+# e.g. test_ops_002_... -> ("ops", 2).
+_CASE_ID = re.compile(r"test_([a-z]+)_(\d+)_")
+
+# Action categories that share one machine state, in the order they must run.
+# TRA before OPS because OPS-004 replaces the CUBRID engine and cannot be undone,
+# so nothing may follow it on that machine; TRA restores the service it stopped,
+# so OPS-001 still starts from a running one. A category absent from this tuple
+# sorts between them rather than last, which is the safe default: last is the one
+# slot that is already spoken for.
+ACTION_CATEGORY_ORDER = ("tra", "ops")
 
 
 def _case_number(item: pytest.Item) -> int:
     """The workbook case number in the test's name, or 0 if it carries none."""
     match = _CASE_ID.match(item.name)
-    return int(match.group(1)) if match else 0
+    return int(match.group(2)) if match else 0
+
+
+def _category_rank(item: pytest.Item) -> int:
+    """Where this case's category sorts among the action categories.
+
+    Keyed off the case ID in the NAME, never the folder, for the same reason
+    every other component here is -- see `_group_key`.
+    """
+    match = _CASE_ID.match(item.name)
+    category = match.group(1) if match else ""
+    if category in ACTION_CATEGORY_ORDER:
+        return ACTION_CATEGORY_ORDER.index(category)
+    return len(ACTION_CATEGORY_ORDER) - 1
 
 
 def _group_key(item: pytest.Item) -> tuple[int, int, int]:
-    """(machine state, observation before action, then case ID).
+    """(machine state, observation before action, category, then case ID).
 
     Sorted by the LAST fixture in INSTALL_FIXTURE_ORDER the test requests, not
     the first: INS-002 asks for BOTH installs, and what decides when it can run
@@ -81,18 +112,31 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     run it before INS-001 -- against a machine the silent install had not
     produced yet, diffing a snapshot that did not exist.
 
+    A case that asks for NO machine-state fixture scores -1 and therefore runs
+    before every case that provisions one. That is where a case which REMOVES
+    the product belongs, and it is the only thing keeping LCM-001 and LCM-002
+    safe: they uninstall whatever is on the machine, so running them after
+    `silent_install` would take the shared machine out from under every OPS
+    case. Do not give a removal case a machine-state fixture.
+
     The second component is the workbook's observation-vs-action rule, made
     executable. Within one machine state the cases that only READ what the
     installer left run before the cases that start, stop, connect or create --
     so an OPS case can never hand INS-002 a machine with the service stopped or
     a database it did not install.
 
-    The third runs the action cases in WORKBOOK ORDER. That is load-bearing:
-    OPS-001 does not connect to anything, so the evidence that a service cycle
-    is non-destructive is OPS-002 connecting immediately after it on the same
-    machine, and OPS-004 replaces the engine so it has to come last.
+    The third keeps two action categories sharing one machine from interleaving
+    by case number -- TRA and OPS both run on `silent_install`, and sorting those
+    on the number alone would step TRA-001, OPS-001, TRA-002, OPS-002 through a
+    module-scoped Tray fixture that is torn down and relaunched each time. See
+    ACTION_CATEGORY_ORDER for why TRA goes first.
 
-    Both of the last two components exist because the alternative is collection
+    The fourth runs the cases within a category in WORKBOOK ORDER. That is
+    load-bearing: OPS-001 does not connect to anything, so the evidence that a
+    service cycle is non-destructive is OPS-002 connecting immediately after it
+    on the same machine, and OPS-004 replaces the engine so it has to come last.
+
+    Those three components exist because the alternative is collection
     order, where `tests/INS/` sorts ahead of `tests/OPS/` because I precedes O,
     and `test_create_database.py` ahead of `test_service_lifecycle.py` because c
     precedes s -- neither of which has anything to do with what the cases need.
@@ -104,7 +148,8 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     names = set(getattr(item, "fixturenames", ()))
     indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
                if fixture in names]
-    return (max(indices) if indices else -1, action, _case_number(item))
+    return (max(indices) if indices else -1, action, _category_rank(item),
+            _case_number(item))
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -155,6 +200,45 @@ def installer(request, settings) -> config_mod.InstallerPackage:
 
 
 @pytest.fixture(scope="session")
+def alternate_installer(settings, installer) -> config_mod.InstallerPackage:
+    """Bundle B, and the proof that it really is a different build.
+
+    Resolved lazily, like `installer`, so a machine that never runs the
+    duplicate-install cases needs no second bundle configured at all.
+
+    The SHA-256 comparison is the point of this fixture existing rather than
+    being one line inside the cases. Burn's gate is on which BUNDLE is
+    registered, so pointing both settings at the same build -- or at two copies
+    of one file -- turns LCM-003 and LCM-004 into re-runs of LCM-002 against the
+    maintenance page. They would fail, and the failure would read as a product
+    defect. The paths are compared by CONTENT because two paths can hold
+    identical bytes and the filenames do not distinguish builds at all.
+    """
+    try:
+        alternate = config_mod.resolve_alternate_installer(settings)
+    except config_mod.ConfigError as exc:
+        pytest.fail(str(exc), pytrace=False)
+
+    if alternate.sha256 == installer.sha256:
+        pytest.fail(
+            "installer.path and installer.alternate_path name the same BUILD "
+            f"(sha256 {alternate.sha256[:16]}...):\n"
+            f"  path           = {installer.path}\n"
+            f"  alternate_path = {alternate.path}\n"
+            "The duplicate-install cases need a bundle the machine does NOT "
+            "have registered. Launched with the installed build, the product "
+            "offers maintenance instead of refusing, which is LCM-002's "
+            "subject rather than theirs.", pytrace=False)
+
+    _note(f"  bundle B   : {alternate.describe()}")
+    _RUN_FACTS["alternate_installer"] = {
+        "path": str(alternate.path), "sha256": alternate.sha256,
+        "size": alternate.size,
+    }
+    return alternate
+
+
+@pytest.fixture(scope="session")
 def run_dir(request) -> Path:
     """Where this run's artefacts go.
 
@@ -170,9 +254,16 @@ def run_dir(request) -> Path:
     return directory
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def note() -> Callable[[str], None]:
-    """Record a line that must appear even when the test passes."""
+    """Record a line that must appear even when the test passes.
+
+    Session-scoped although it holds no per-test state -- it hands back one
+    module-level function -- so that a fixture of ANY scope can request it. A
+    function-scoped `note` cannot be used by the provisioning fixtures, and a
+    provisioning fixture that cannot talk is three minutes of installing that a
+    passing run leaves unaccounted for.
+    """
     return _note
 
 
@@ -486,7 +577,7 @@ def check_against_bundle(installer, note):
 
         # "UninstallString is present and resolves to an executable that EXISTS
         # on disk." That the uninstall string actually WORKS is deliberately NOT
-        # asserted -- running it is destructive, and LCM-002 covers it.
+        # asserted -- running it is destructive, and LCM-001 covers it.
         if not arp.uninstall_string:
             problems.append("the Apps & Features entry carries no "
                             "UninstallString, so Windows cannot remove the "

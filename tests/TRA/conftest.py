@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from cubridwsl import constants, cubrid_cli, distro
-from cubridwsl.drivers import tray
+from cubridwsl import constants, cubrid_cli, distro, tray
 
 
 @pytest.fixture(scope="module")

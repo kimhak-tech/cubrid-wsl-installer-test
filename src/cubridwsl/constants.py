@@ -300,6 +300,28 @@ WIZARD_STRINGS = {
         # CustomCancelDlg, spawned by the Cancel button on every wizard page.
         "cancel_title": "Cancel Installation",
         "btn_yes": "Yes",
+        # Burn's MAINTENANCE page, shown when the bundle is launched on a
+        # machine that already carries the product. The bundle is
+        # DisableModify=yes / DisableRemove=no, and BundleTheme.xml's Modify
+        # page draws exactly two buttons -- Uninstall and Close -- so reaching
+        # this page at all IS the duplicate-install detection in the UI path.
+        "modify_header": "Modify Setup",
+        "bundle_btn_uninstall": "&Uninstall",
+        # Burn's own Success and Failure pages, which both end an uninstall and
+        # both carry a `&Close`. Their headers are the only thing that tells
+        # them apart, and they are UNNAMED theme controls -- so WixStdBA cannot
+        # substitute its per-action variants ("Uninstall Complete", "Uninstall
+        # Failed"), and these two literals hold whatever the bundle was asked
+        # to do. Matching the per-action strings instead would find nothing.
+        "bundle_success_header": "Successful",
+        "bundle_failure_header": "Setup Failed",
+        # A FRAGMENT of FailureAlreadyInstalled, not the whole string. The
+        # product's message is two sentences joined by a literal CRLF
+        # (`&#13;&#10;` in the .wxl), and how a Hypertext control reports an
+        # embedded line break is not something to bet a case on. This half
+        # carries the meaning the workbook asks to see -- that upgrade and
+        # duplicate installation are not supported -- in one unbroken line.
+        "already_installed_message": "Upgrade/duplicate installation is not supported",
     },
     "ko": {
         "bundle_title": "CUBRID For WSL 설치",
@@ -319,6 +341,16 @@ WIZARD_STRINGS = {
         "btn_cancel": "취소",
         "cancel_title": "설치 취소",
         "btn_yes": "예",
+        "modify_header": "제거 안내",
+        "bundle_btn_uninstall": "제거(&U)",
+        # Character-for-character the Korean `finish_title` above, and
+        # deliberately written out again: that one is the MSI's CustomFinishDlg
+        # title from strings_ko-kr.wxl, this one is Burn's SuccessHeader from
+        # BundleTheme_ko-kr.wxl. Two product strings that happen to coincide in
+        # Korean and not in English -- not one string repeated.
+        "bundle_success_header": "완료",
+        "bundle_failure_header": "설치 실패",
+        "already_installed_message": "업그레이드/중복 설치를 지원하지 않습니다",
     },
 }
 
@@ -441,13 +473,19 @@ TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 # The Tray executable, as installed. Named here because reset stops it before
 # uninstalling -- see reset.stop_tray().
 TRAY_EXE = "cubrid_tray_app.exe"
-TRAY_WINDOW_CLASS = "CUBRIDTrayApp"
+
+# The popup menu, its About dialog and the guide it opens. The menu labels are
+# what the Tray appends at ShowContextMenu(); the driver matches on them because
+# no persistent HMENU exists to index by command ID from outside the process.
 TRAY_ABOUT_TITLE = "About CUBRID Service Tray"
 TRAY_MENU_ITEMS = ("About", "CUBRID Start", "CUBRID Stop", "Guide", "Exit")
+TRAY_GUIDE_FILE = "cubrid_guide.html"
+
+# The notification-area tooltip, which is the only place the Tray REPORTS the
+# service state it polled. Readable through UI Automation only.
 TRAY_TIP_RUNNING = "CUBRID Service - Running"
 TRAY_TIP_STOPPED = "CUBRID Service - Stopped"
 TRAY_TIP_ERROR = "CUBRID Service - Error"
-TRAY_GUIDE_FILE = "cubrid_guide.html"
 
 # Buttons on the environment-check warning dialogs.
 OK_BUTTONS = ("OK", "확인")

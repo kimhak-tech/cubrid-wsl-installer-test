@@ -8,6 +8,25 @@
 #   path = "D:/CUBRID/CUBRID-WSL/builds/CUBRID-11.4-For-WSL-1.0.0-0003-win64.exe"
 path = ""
 
+# BUNDLE B -- a SECOND, DIFFERENT BUILD, for the duplicate-install cases
+# (LCM-003 and LCM-004). Leave empty unless you run them; nothing else uses it.
+#
+# "Different" is narrower than it sounds. Burn refuses an install when the
+# product is present and THIS bundle is not the one registered, and the BundleId
+# is regenerated on every build -- while `Bundle Version` is hardcoded 1.0.0.
+# So the split is not by version at all:
+#
+#   the byte-identical .exe that installed the product -> maintenance page
+#   any other build, same version included             -> refused
+#
+# Which means any second build works, and the two builds already on the
+# reference machine are a valid pair. Confirmed by hand 2026-09-14. Unlike
+# `path` above, the filename need not match the shipped pattern -- a build kept
+# for this is usually renamed by hand -- and the SHA-256 of BOTH bundles is
+# recorded in the run report, because the names do not distinguish them.
+#   alternate_path = "D:/CUBRID/CUBRID-WSL/builds/CUBRID-11.4-For-WSL-1.0.0-0003-win64-old.exe"
+alternate_path = ""
+
 [distro]
 # The account the product itself uses for every call into the distribution.
 user = "cubrid"

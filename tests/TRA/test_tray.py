@@ -13,7 +13,11 @@ import pytest
 
 from cubridwsl import constants, distro
 
-pytestmark = [pytest.mark.tray, pytest.mark.destructive]
+# `action`: these cases START and STOP CUBRID and the distribution through
+# the menu, so they must sort after the cases that only OBSERVE what the
+# installer left on the shared machine. Without it TRA lands in the
+# observation tier and INS-002 reads a machine the Tray has already acted on.
+pytestmark = [pytest.mark.tray, pytest.mark.destructive, pytest.mark.action]
 
 
 def _service_status(cubrid) -> bool:
