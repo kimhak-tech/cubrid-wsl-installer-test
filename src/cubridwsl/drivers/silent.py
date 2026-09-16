@@ -13,6 +13,13 @@ without it there is no bundle log at all and a failure has no diagnosis.
 This module reports what happened; it never judges it. In particular it never
 treats a zero exit code as proof of success, because the product's own WSL
 removal step is declared to ignore its failures.
+
+Two functions at the end -- `install_cubrid_wsl` and `uninstall_cubrid_wsl` --
+go one step further than the rest: they WAIT for the machine to reach the state
+they name, so they read `windows` and `wsl` to know when it has. That still
+judges nothing; it only means a test calling them is never racing an install
+that has not finished landing. Everything above them runs one command and
+returns.
 """
 from __future__ import annotations
 
@@ -22,9 +29,11 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .. import config as config_mod, constants, preflight
+from ..windows import registry, tray
+from ..wsl import cubrid, distro
 
 # 0 = success, 3010 = success but a reboot is pending. Both are installs that
 # happened; anything else is not.
@@ -117,6 +126,30 @@ def variable_from_log(log_path: Path, name: str) -> str | None:
     for match in re.finditer(rf"Variable: {re.escape(name)}\s*=\s*(.*)", text):
         value = match.group(1).strip()
     return value
+
+
+def text_in_logs(logs: list[Path], fragments: list[str]) -> str:
+    """The first line across these logs containing any fragment, or "".
+
+    For the runs whose subject is a REFUSAL. A machine that did not change is
+    satisfied equally by a bundle that refused and by one that did nothing at
+    all, so the bundle saying why it stopped is the difference between the two.
+
+    Searched across every log the run produced rather than just the bundle's
+    own: which file a message lands in is Burn's choice to change.
+
+    The same lenient decode as `variable_from_log` -- Burn writes UTF-8 with a
+    BOM, and a decode error must never lose the diagnosis.
+    """
+    for path in logs:
+        try:
+            text = path.read_bytes().decode("utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if any(fragment in line for fragment in fragments):
+                return line.strip()
+    return ""
 
 
 def ui_level_from_log(log_path: Path) -> int | None:
@@ -230,3 +263,147 @@ def _split_command(text: str) -> list[str]:
     lexer.whitespace_split = True
     lexer.escape = ""            # backslashes are path separators, not escapes
     return list(lexer)
+
+
+# --------------------------------------------------------------------------- #
+# The two verbs a test calls
+#
+# Everything above runs ONE command and reports what happened. These two put
+# the machine into a named state and do not return until it is there -- because
+# an install that returns while demodb is still being written, or an uninstall
+# that returns while its child processes are still exiting, makes every step
+# after it a race, and a case that flakes is worse than one that fails.
+#
+# Neither asserts. What the machine looks like afterwards is the case's
+# question, and every check it needs is one call away in `windows` and `wsl`.
+# --------------------------------------------------------------------------- #
+Note = Callable[[str], None]
+
+# How long a fresh install is given to finish landing. The matching budget for
+# a REMOVAL belongs to `windows.apps.wait_until_removed`, which every route
+# shares.
+READY_SETTLE_SECONDS = 300.0
+
+
+def install_cubrid_wsl(package: config_mod.InstallerPackage,
+                       settings: dict[str, Any], log_path: Path, *,
+                       note: Note | None = None) -> RunResult:
+    """Install CUBRID for WSL unattended, and wait until it is actually usable.
+
+    /quiet with NO property overrides. `constants.INSTALL_OPTIONS` IS the set
+    of shipping defaults, so passing them would test that the command line
+    works rather than that the defaults do -- and reaching a default
+    installation is all this step is for.
+
+    It REPORTS rather than raises when the bundle does not report success, for
+    the same reason `wizard.install_cubrid_wsl` does: one case launches a bundle
+    it EXPECTS to be rejected, and a verb that raised could not serve it. A
+    set-up step is protected instead by the gate every case already carries --
+    `if not registry.exists(): pytest.fail(...)` -- which is the better check
+    anyway, because it asks the machine rather than trusting an exit code.
+
+    Nothing is waited for when the bundle did not report success. There is no
+    install to settle, and the full settle budget spent on a machine that was
+    never installed is five minutes of nothing.
+    """
+    say: Note = note or (lambda _text: None)
+    preflight.require_windows()
+    preflight.require_elevation()
+
+    say(f"  install    : {package.path.name}")
+    result = install(package, {}, log_path,
+                     timeout=settings["timeouts"]["install_seconds"],
+                     mode="quiet")
+    say(f"  install    : {result.describe()}")
+
+    if result.ok:
+        _wait_until_ready(settings, say)
+    else:
+        say("  install    : the bundle did not report success, so nothing is "
+            "waited for -- there is no install to settle")
+    return result
+
+
+def _wait_until_ready(settings: dict[str, Any], say: Note) -> None:
+    """Poll until the installation has finished landing.
+
+    Reports rather than raises on a timeout. A component that never came up is
+    a finding about the PRODUCT and belongs to whichever case asserts it, not
+    to a set-up error that reads like the framework broke -- and everything
+    else about the machine is still worth testing.
+    """
+    deadline = time.monotonic() + READY_SETTLE_SECONDS
+    while True:
+        name = registry.wsl_name()
+        ready = (registry.exists() and distro.exists(name)
+                 and tray.is_running()
+                 and cubrid.is_ready(name, settings))
+        if ready:
+            say(f"  install    : settled -- distro {name!r}, Tray up, "
+                "CUBRID running, demodb present")
+            return
+        if time.monotonic() >= deadline:
+            say(f"  install    : did NOT fully settle in "
+                f"{READY_SETTLE_SECONDS:.0f}s -- registry={registry.exists()} "
+                f"distro={distro.exists(name)} tray={tray.is_running()} "
+                f"cubrid={cubrid.service_status(name, settings)}. Continuing "
+                "so the case reports exactly what is and is not there.")
+            return
+        time.sleep(10)
+
+
+def uninstall_cubrid_wsl(package: config_mod.InstallerPackage,
+                         settings: dict[str, Any], log_path: Path, *,
+                         note: Note | None = None) -> RunResult | None:
+    """Remove any CUBRID for WSL on this machine. For SET-UP and CLEAN-UP only.
+
+    Returns None when there was nothing to remove, so a first run on a clean
+    machine costs nothing.
+
+    Two things it does that `windows.apps.uninstall_cubrid_wsl` deliberately
+    does NOT, which is why they are separate functions rather than one:
+
+    * **it stops the Tray first.** By the second run of any suite there is a
+      Tray holding the install directory open, and that is the likeliest cause
+      of a leftover folder -- which would then read as a product defect rather
+      than as our own doing. A case that is TESTING an uninstall must never do
+      this: whether the product copes with its own running Tray is the
+      question.
+    * **it prefers the machine's own cached bundle** over the configured one.
+      Installer filenames are not unique in this product, so "the installer I
+      was pointed at" and "the installer that is actually installed" are not
+      reliably the same binary -- and Burn will not uninstall a bundle it does
+      not have registered.
+    """
+    say: Note = note or (lambda _text: None)
+    preflight.require_windows()
+
+    # Imported HERE, not at module scope. `windows.apps` needs this module to
+    # run the command it finds, so a module-level import each way would be a
+    # cycle. This is the only place the two meet, and it meets at call time.
+    from ..windows import apps
+
+    if not (registry.exists() or apps.is_listed()):
+        say("  cleanup    : nothing installed")
+        return None
+
+    preflight.require_elevation()
+    if tray.stop():
+        say(f"  cleanup    : stopped a running {constants.TRAY_EXE}")
+
+    name = registry.wsl_name()
+    command = apps.uninstall_command()
+    if command:
+        say(f"  cleanup    : uninstalling via {command!r}")
+        result = uninstall_with_command(
+            command, log_path,
+            timeout=settings["timeouts"]["uninstall_seconds"], mode="quiet")
+    else:
+        say(f"  cleanup    : no Apps & Features entry; using {package.path.name}")
+        result = uninstall(package, log_path,
+                           timeout=settings["timeouts"]["uninstall_seconds"],
+                           mode="quiet")
+    say(f"  cleanup    : {result.describe()}")
+
+    apps.wait_until_removed(name, note=say)
+    return result

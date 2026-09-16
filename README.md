@@ -32,7 +32,9 @@ Test Case
 **Key principle:** drivers perform actions; the verification layer determines
 whether the resulting system state is correct. A driver never asserts, and a
 test never installs for itself — it asks for a fixture, so many tests share one
-installation.
+installation. The exception is a case that **removes** the product: it cannot
+share a machine with anything, so it installs and uninstalls in its own test
+body (see `tests/LCM/`).
 
 ---
 
@@ -63,6 +65,15 @@ cubrid-wsl-installer-test/
 │   ├── drivers/
 │   │   ├── silent.py          # Silent/unattended installer
 │   │   └── wizard.py          # Installer wizard
+│   ├── windows/               # What the product left on WINDOWS, by surface
+│   │   ├── registry.py        #   what the PRODUCT wrote about itself
+│   │   ├── apps.py            #   the Apps & Features entry, and its
+│   │   │                      #     Uninstall button
+│   │   ├── tray.py            #   the Tray, as a process and as a file
+│   │   └── files.py           #   install directories and leftovers
+│   ├── wsl/                   # What the product left INSIDE WSL
+│   │   ├── distro.py          #   the distribution itself
+│   │   └── cubrid.py          #   CUBRID running in it: services, databases
 │   ├── constants.py           # All product values: registry paths, install
 │   │                          #   options, tray identifiers, wizard UI strings
 │   ├── state.py               # Machine-state collection
@@ -79,11 +90,22 @@ cubrid-wsl-installer-test/
 │   ├── framework_checks.py    # Not cases: do the framework's tools give right answers
 │   ├── INS/                   # Category 02, Installer Orchestration
 │   │   └── test_install_*.py
-│   └── OPS/                   # Category 03, CUBRID Operational
-│       ├── conftest.py        #   machine binding + precondition fixtures
-│       └── test_*.py
+│   ├── OPS/                   # Category 03, CUBRID Operational
+│   │   ├── conftest.py        #   machine binding + precondition fixtures
+│   │   └── test_*.py
+│   └── LCM/                   # Category 05, Lifecycle Management
+│       ├── test_lcm_uninstall.py
+│       └── test_lcm_duplicate_install.py
 └── reports/                   # Test results (gitignored)
 ```
+
+`windows/` and `wsl/` are new with `tests/LCM/` and are read only by it. They
+are the direction the framework is going — one module per surface of the
+machine, each answering its own questions and performing the actions that
+surface has — and they will in time replace `state.py`, `verify.py`, `reset.py`,
+`distro.py` and `cubrid_cli.py`, which still serve every `INS` and `OPS` case.
+Until that migration happens, read the old modules and add to neither set
+speculatively.
 
 ---
 
@@ -277,7 +299,7 @@ def test_ins_005_something(silent_install):
 
 | You are adding | It goes in |
 |---|---|
-| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`) — no new fixture |
+| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/LCM/`) — no new fixture |
 | A fact every installation should satisfy | a `Check` in `verify.CHECKS` — both drivers pick it up |
 | Something new read from the machine | the matching `read_*` in `state.py` |
 | A registry path, option name or UI string | `constants.py` |
@@ -285,6 +307,16 @@ def test_ins_005_something(silent_install):
 | An action against the *installed* product (start, stop, connect, query, create) | a method on `cubrid_cli.CubridCli`, and a case under `tests/OPS/` marked `action` |
 | A recorded product output format | a `parse_*` function in `state.py`; the cases exercise it against the real product -- no pasted sample |
 | A framework function every case reads the product through | a check in `tests/framework_checks.py`, fed input whose right answer is known |
+
+Lifecycle cases (`tests/LCM/`) work against the newer `windows/` + `wsl/`
+modules instead, and a few things go elsewhere for them:
+
+| You are adding | It goes in |
+|---|---|
+| A case that REMOVES the product | the test body itself, set up with `silent.install_cubrid_wsl` — and **no machine-state fixture**, which is what keeps it ahead of every case that provisions one |
+| A case that runs a SECOND bundle over an installation | the test body, reading the values it claims are unchanged before the action and comparing them after |
+| A second bundle to test against | `installer.alternate_path` in `settings.local.toml` — any build other than the one under test. It must differ: the BundleId is regenerated on every build, so a rebuild from identical source is a different bundle, while the SAME file gets the maintenance page instead |
+| Something a lifecycle case reads from the machine | the module that owns that surface — `windows/registry.py`, `windows/apps.py`, `windows/tray.py`, `windows/files.py`, `wsl/distro.py`, `wsl/cubrid.py` — one question per function, answered as a plain value |
 
 ### Architecture Rule
 

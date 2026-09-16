@@ -58,6 +58,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # against the one INS-001 left, so the wizard install must happen FIRST -- and
 # INS-001's own assertions read the live disk (the uninstall string names a file
 # that must exist), so they have to run before the silent install replaces it.
+#
+# No LCM case is here, and that is deliberate: all four install and uninstall
+# in their own test bodies. Asking for no machine-state fixture is what places
+# them AHEAD of every case that provisions one, and for LCM-001 and LCM-002 that
+# is load-bearing rather than tidy -- they REMOVE the product, so running after
+# `silent_install` would take the shared machine out from under every OPS case.
+# See `_group_key`.
 INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install", "silent_wsl1_install")
 
@@ -80,6 +87,13 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     is the later one. Sorting on the first would put it in the wizard group and
     run it before INS-001 -- against a machine the silent install had not
     produced yet, diffing a snapshot that did not exist.
+
+    A case that asks for NO machine-state fixture scores -1 and therefore runs
+    before every case that provisions one. That is where a case which REMOVES
+    the product belongs, and it is the only thing keeping LCM-001 and LCM-002
+    safe: they uninstall whatever is on the machine, so running them after
+    `silent_install` would take the shared machine out from under every OPS
+    case. Do not give a removal case a machine-state fixture.
 
     The second component is the workbook's observation-vs-action rule, made
     executable. Within one machine state the cases that only READ what the
@@ -152,6 +166,45 @@ def installer(request, settings) -> config_mod.InstallerPackage:
             settings, request.config.getoption("--installer"))
     except config_mod.ConfigError as exc:
         pytest.fail(str(exc), pytrace=False)
+
+
+@pytest.fixture(scope="session")
+def alternate_installer(settings, installer) -> config_mod.InstallerPackage:
+    """Bundle B, and the proof that it really is a different build.
+
+    Resolved lazily, like `installer`, so a machine that never runs the
+    duplicate-install cases needs no second bundle configured at all.
+
+    The SHA-256 comparison is the point of this fixture existing rather than
+    being one line inside the cases. Burn's gate is on which BUNDLE is
+    registered, so pointing both settings at the same build -- or at two copies
+    of one file -- turns LCM-003 and LCM-004 into re-runs of LCM-002 against the
+    maintenance page. They would fail, and the failure would read as a product
+    defect. The paths are compared by CONTENT because two paths can hold
+    identical bytes and the filenames do not distinguish builds at all.
+    """
+    try:
+        alternate = config_mod.resolve_alternate_installer(settings)
+    except config_mod.ConfigError as exc:
+        pytest.fail(str(exc), pytrace=False)
+
+    if alternate.sha256 == installer.sha256:
+        pytest.fail(
+            "installer.path and installer.alternate_path name the same BUILD "
+            f"(sha256 {alternate.sha256[:16]}...):\n"
+            f"  path           = {installer.path}\n"
+            f"  alternate_path = {alternate.path}\n"
+            "The duplicate-install cases need a bundle the machine does NOT "
+            "have registered. Launched with the installed build, the product "
+            "offers maintenance instead of refusing, which is LCM-002's "
+            "subject rather than theirs.", pytrace=False)
+
+    _note(f"  bundle B   : {alternate.describe()}")
+    _RUN_FACTS["alternate_installer"] = {
+        "path": str(alternate.path), "sha256": alternate.sha256,
+        "size": alternate.size,
+    }
+    return alternate
 
 
 @pytest.fixture(scope="session")
@@ -486,7 +539,7 @@ def check_against_bundle(installer, note):
 
         # "UninstallString is present and resolves to an executable that EXISTS
         # on disk." That the uninstall string actually WORKS is deliberately NOT
-        # asserted -- running it is destructive, and LCM-002 covers it.
+        # asserted -- running it is destructive, and LCM-001 covers it.
         if not arp.uninstall_string:
             problems.append("the Apps & Features entry carries no "
                             "UninstallString, so Windows cannot remove the "
