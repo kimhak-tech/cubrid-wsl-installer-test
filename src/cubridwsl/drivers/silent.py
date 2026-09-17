@@ -346,8 +346,9 @@ def _wait_until_ready(settings: dict[str, Any], say: Note) -> None:
             say(f"  install    : did NOT fully settle in "
                 f"{READY_SETTLE_SECONDS:.0f}s -- registry={registry.exists()} "
                 f"distro={distro.exists(name)} tray={tray.is_running()} "
-                f"cubrid={cubrid.service_status(name, settings)}. Continuing "
-                "so the case reports exactly what is and is not there.")
+                f"cubrid={cubrid.service_status(name, settings).describe()}. "
+                "Continuing so the case reports exactly what is and is not "
+                "there.")
             return
         time.sleep(10)
 

@@ -54,8 +54,8 @@ uninstall_seconds = 600
 wsl_command_seconds = 60
 # `cubrid service start` brings up three components, `createdb` writes a
 # database's volumes, and `csql` on a cold database opens them -- none of
-# which fits the budget a status read is sized for. Used by the Category 03
-# (OPS) cases through cubrid_cli.for_installation.
+# which fits the budget a status read is sized for. Used by the actions in
+# wsl/cubrid.py that the Category 03 (OPS) cases call.
 cubrid_command_seconds = 300
 # OPS-004 downloads a CUBRID engine package (~100 MB) inside the distribution
 # and runs its installer. Neither fits the per-command budget above.
@@ -108,7 +108,7 @@ url = "https://ftp.cubrid.org/CUBRID_Engine/11.4.5/CUBRID-11.4.5.1866-e9c17f7-Li
 #
 # With these the installer asks nothing, so nothing depends on stdin reaching
 # it. The piped answers stay as a backstop for a prompt the flags do not
-# suppress; `cubrid_cli.install_engine` explains why the braces around that
+# suppress; `wsl.cubrid.install_engine` explains why the braces around that
 # pipe are load-bearing.
 #
 # Set to "" to fall back to answering the prompts, and read the transcript in

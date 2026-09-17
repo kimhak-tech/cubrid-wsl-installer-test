@@ -59,52 +59,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # INS-001's own assertions read the live disk (the uninstall string names a file
 # that must exist), so they have to run before the silent install replaces it.
 #
-# No LCM case is here, and that is deliberate. LCM-001 and LCM-002 install and
-# uninstall in their own test bodies, because removing the product is their
-# subject; LCM-003 and LCM-004 share `tests/LCM/conftest.py`'s module-scoped
-# `suite_installation`, which is not one of these names either. Asking for no
-# fixture in THIS tuple is what places them all AHEAD of every case that
-# provisions a shared machine, and for LCM-001 and LCM-002 that is load-bearing
-# rather than tidy -- they REMOVE the product, so running after `silent_install`
-# would take the shared machine out from under every OPS case. See `_group_key`.
+# No LCM or OPS case is here, and that is deliberate. LCM-001 and LCM-002
+# install and uninstall in their own test bodies, because removing the product
+# is their subject; LCM-003/004 and the OPS cases each share a
+# `suite_installation` from their own category's conftest, which is not one of
+# these names either. Asking for no fixture in THIS tuple is what places them
+# all AHEAD of every case that provisions a shared machine, and for LCM-001 and
+# LCM-002 that is load-bearing rather than tidy -- they REMOVE the product, so
+# running after `silent_install` would take the shared machine out from under
+# every TRA case. See `_group_key`.
 INSTALL_FIXTURE_ORDER = ("wizard_install", "silent_install",
                          "wizard_all_custom_install", "silent_wsl1_install")
 
 
-# The category and case ID carried in a test function name,
-# e.g. test_ops_002_... -> ("ops", 2).
-_CASE_ID = re.compile(r"test_([a-z]+)_(\d+)_")
-
-# Action categories that share one machine state, in the order they must run.
-# TRA before OPS because OPS-004 replaces the CUBRID engine and cannot be undone,
-# so nothing may follow it on that machine; TRA restores the service it stopped,
-# so OPS-001 still starts from a running one. A category absent from this tuple
-# sorts between them rather than last, which is the safe default: last is the one
-# slot that is already spoken for.
-ACTION_CATEGORY_ORDER = ("tra", "ops")
+# The case number carried in a test function name, e.g. test_ops_002_... -> 2.
+_CASE_ID = re.compile(r"test_[a-z]+_(\d+)_")
 
 
 def _case_number(item: pytest.Item) -> int:
     """The workbook case number in the test's name, or 0 if it carries none."""
     match = _CASE_ID.match(item.name)
-    return int(match.group(2)) if match else 0
-
-
-def _category_rank(item: pytest.Item) -> int:
-    """Where this case's category sorts among the action categories.
-
-    Keyed off the case ID in the NAME, never the folder, for the same reason
-    every other component here is -- see `_group_key`.
-    """
-    match = _CASE_ID.match(item.name)
-    category = match.group(1) if match else ""
-    if category in ACTION_CATEGORY_ORDER:
-        return ACTION_CATEGORY_ORDER.index(category)
-    return len(ACTION_CATEGORY_ORDER) - 1
+    return int(match.group(1)) if match else 0
 
 
 def _group_key(item: pytest.Item) -> tuple[int, int, int]:
-    """(machine state, observation before action, category, then case ID).
+    """(machine state, observation before action, then case ID).
 
     Sorted by the LAST fixture in INSTALL_FIXTURE_ORDER the test requests, not
     the first: INS-002 asks for BOTH installs, and what decides when it can run
@@ -116,30 +95,28 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     before every case that provisions one. That is where a case which REMOVES
     the product belongs, and it is the only thing keeping LCM-001 and LCM-002
     safe: they uninstall whatever is on the machine, so running them after
-    `silent_install` would take the shared machine out from under every OPS
+    `silent_install` would take the shared machine out from under every TRA
     case. Do not give a removal case a machine-state fixture.
+
+    The OPS cases score -1 too, and sit together at the end of that slot: they
+    are all `action`, which no other case without a machine-state fixture is.
+    That keeps them in one run, so the module-scoped `suite_installation` in
+    tests/OPS/conftest.py is installed once and removed once.
 
     The second component is the workbook's observation-vs-action rule, made
     executable. Within one machine state the cases that only READ what the
     installer left run before the cases that start, stop, connect or create --
-    so an OPS case can never hand INS-002 a machine with the service stopped or
-    a database it did not install.
+    so a TRA case can never hand INS-002 a machine with the service stopped.
 
-    The third keeps two action categories sharing one machine from interleaving
-    by case number -- TRA and OPS both run on `silent_install`, and sorting those
-    on the number alone would step TRA-001, OPS-001, TRA-002, OPS-002 through a
-    module-scoped Tray fixture that is torn down and relaunched each time. See
-    ACTION_CATEGORY_ORDER for why TRA goes first.
-
-    The fourth runs the cases within a category in WORKBOOK ORDER. That is
+    The third runs the cases within a category in WORKBOOK ORDER. That is
     load-bearing: OPS-001 does not connect to anything, so the evidence that a
     service cycle is non-destructive is OPS-002 connecting immediately after it
     on the same machine, and OPS-004 replaces the engine so it has to come last.
 
-    Those three components exist because the alternative is collection
+    Those components exist because the alternative is collection
     order, where `tests/INS/` sorts ahead of `tests/OPS/` because I precedes O,
-    and `test_create_database.py` ahead of `test_service_lifecycle.py` because c
-    precedes s -- neither of which has anything to do with what the cases need.
+    and `test_lcm_uninstall.py` after `test_lcm_duplicate_install.py` because u
+    follows d -- neither of which has anything to do with what the cases need.
     Nothing here keys off a PATH: a case is placed by the machine state it asks
     for and the markers it carries, so moving a file between folders cannot
     change when it runs.
@@ -148,8 +125,7 @@ def _group_key(item: pytest.Item) -> tuple[int, int, int]:
     names = set(getattr(item, "fixturenames", ()))
     indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
                if fixture in names]
-    return (max(indices) if indices else -1, action, _category_rank(item),
-            _case_number(item))
+    return (max(indices) if indices else -1, action, _case_number(item))
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

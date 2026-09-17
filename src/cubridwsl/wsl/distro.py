@@ -186,7 +186,7 @@ def run(name: str, command: str, *, user: str | None = None,
     failure looks exactly like the piped answers being wrong. A command that
     must receive input on stdin has to protect it -- `{ yes y | ./installer; }`,
     where the group takes the redirect and the pipe inside still wins. See
-    `cubrid_cli.install_engine`.
+    `wsl.cubrid.install_engine`.
     """
     if not name:
         raise DistroError("a distribution name is required; the default "
