@@ -511,7 +511,7 @@ class CubridCli:
             timeout=timeout)
 
     def createdb(self, database: str,
-                 locale: str = constants.OPS_TESTDB_LOCALE
+                 locale: str = "en_US"
                  ) -> distro.CommandResult:
         """`cubrid createdb` in a directory of its own under $CUBRID_DATABASES.
 

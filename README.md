@@ -70,18 +70,17 @@ cubrid-wsl-installer-test/
 │   │   ├── apps.py            #   the Apps & Features entry, and its
 │   │   │                      #     Uninstall button
 │   │   ├── tray.py            #   the Tray, as a process and as a file
+│   │   ├── shortcuts.py       #   the desktop shortcuts the installer created
 │   │   └── files.py           #   install directories and leftovers
 │   ├── wsl/                   # What the product left INSIDE WSL
 │   │   ├── distro.py          #   the distribution itself
-│   │   └── cubrid.py          #   CUBRID running in it: services, databases
+│   │   └── cubrid.py          #   CUBRID running in it: service/server
+│   │                          #     control, csql, createdb, engine install
 │   ├── constants.py           # All product values: registry paths, install
 │   │                          #   options, tray identifiers, wizard UI strings
-│   ├── state.py               # Machine-state collection
-│   ├── cubrid_cli.py          # CUBRID's own CLI inside the distribution:
-│   │                          #   service/server control, csql, createdb
-│   ├── verify.py              # Expected vs actual verification
-│   ├── distro.py              # WSL operations
-│   ├── reset.py               # Machine cleanup
+│   ├── provisioning.py        # One installation shared by a category's cases
+│   │                          #   and removed when they finish; a category's
+│   │                          #   conftest picks the scope
 │   ├── preflight.py           # Session preconditions: Windows, elevation, account
 │   └── config.py              # Configuration loading
 ├── tests/
@@ -91,21 +90,34 @@ cubrid-wsl-installer-test/
 │   ├── INS/                   # Category 02, Installer Orchestration
 │   │   └── test_install_*.py
 │   ├── OPS/                   # Category 03, CUBRID Operational
-│   │   ├── conftest.py        #   machine binding + precondition fixtures
-│   │   └── test_*.py
+│   │   ├── conftest.py        #   one shared installation for the module below
+│   │   └── test_ops_cubrid_operational.py
+│   ├── TRA/                   # Category 04, CUBRID Control Tray
+│   │   ├── conftest.py        #   the Tray driver and a CUBRID CLI bound to
+│   │   │                      #     the machine `silent_install` left
+│   │   └── test_tray.py
 │   └── LCM/                   # Category 05, Lifecycle Management
+│       ├── conftest.py        #   one shared installation, for the two cases
+│       │                      #     below that do NOT consume it
 │       ├── test_lcm_uninstall.py
 │       └── test_lcm_duplicate_install.py
 └── reports/                   # Test results (gitignored)
 ```
 
-`windows/` and `wsl/` are new with `tests/LCM/` and are read only by it. They
-are the direction the framework is going — one module per surface of the
-machine, each answering its own questions and performing the actions that
-surface has — and they will in time replace `state.py`, `verify.py`, `reset.py`,
-`distro.py` and `cubrid_cli.py`, which still serve every `INS` and `OPS` case.
-Until that migration happens, read the old modules and add to neither set
-speculatively.
+`windows/` and `wsl/` hold one module per surface of the machine, each
+answering its own questions and performing the actions that surface has. A
+function belongs in the module that owns its surface; do not add a shared
+catch-all module to reuse it.
+
+There are two ways a case gets a machine, and the difference is what the case
+does to it. A **machine-state fixture** in `tests/conftest.py` establishes a
+named state that the verification layer is then asked about, and holds it for
+the session. `provisioning.py` is for a group of cases that needs nothing more
+than a working installation to act against and wants it gone afterwards: a
+category's own conftest declares the fixture at the scope its cases need and
+delegates the body with `yield from`. Sharing either way is only sound for cases
+that do not CONSUME the installation — LCM-001 and LCM-002 remove the product,
+so they install for themselves inside the test body and take no such fixture.
 
 ---
 
@@ -280,49 +292,68 @@ When adding a new scenario:
    No case-ID history, no dates, no "absorbed from" tags — IDs get renumbered
    and a stale one sends the reader to the wrong workbook row. Constraints a
    reader must not break belong inline, next to the code they govern.
-3. Reuse existing fixtures whenever possible.
-4. Keep product-specific verification in the verification layer rather than
-   duplicating it in tests.
-5. Avoid hardcoded product values in test files — they belong in `constants.py`.
-6. Keep each test independent and restore any machine state it changes. The
-   install fixtures are shared for the whole session, so a test that stops the
-   service hands the next test a stopped service.
-7. Never `time.sleep()`. Use `state.wait_until(...)`.
+3. Write the body as numbered steps — `# 1. Set up`, `# 2. Action`,
+   `# 3. Verification`, ... — each calling one function from `windows/` or
+   `wsl/`, with a plain `assert` straight after the action it checks.
+4. Act first, then verify what came back: run the command, keep its result,
+   and assert on that result — `result.ok`, `result.value`,
+   `result.rows_selected` — rather than calling a helper that answers yes or no.
+5. A case that shares an installation starts by putting the machine into the
+   state it needs (service running, no leftover database or table), rather
+   than trusting the case before it to have cleaned up.
+6. Declare a value used by one case inside that case. Only product values
+   shared across cases — registry paths, option names, UI strings — go in
+   `constants.py`.
+7. Never `time.sleep()` in a test. An action waits until its change has landed
+   (as `cubrid.service_start` does), so the assertion on the next line is not a
+   race.
 
 Example:
 
 ```python
-def test_ins_005_something(silent_install):
-    problems = silent_install.comparison.problems("distro")
-    assert not problems, problems
+def test_ops_005_something(suite_installation, settings, note):
+    wsl_name = suite_installation.wsl_name
+    demodb = constants.DEMODB_NAME
+
+    # ----------------------------------------------------------------- #
+    # 1. Set up -- demodb's server running
+    # ----------------------------------------------------------------- #
+    if not cubrid.is_server_started(wsl_name, demodb, settings):
+        cubrid.server_start(wsl_name, demodb, settings)
+
+    # ----------------------------------------------------------------- #
+    # 2. Action -- query it
+    # ----------------------------------------------------------------- #
+    result = cubrid.csql(wsl_name, "SELECT 1", demodb, settings)
+    note(f"  OPS-005-csql       : {result.describe()}")
+
+    # ----------------------------------------------------------------- #
+    # 3. Verification
+    # ----------------------------------------------------------------- #
+    assert result.ok and result.rows_selected == 1, (
+        f"csql could not query {demodb}: {result.describe()}")
 ```
 
 ### Where things go
 
 | You are adding | It goes in |
 |---|---|
-| A case against an existing installation | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/TRA/`, `tests/LCM/`) — no new fixture |
-| A fact every installation should satisfy | a `Check` in `verify.CHECKS` — both drivers pick it up |
-| Something new read from the machine | the matching `read_*` in `state.py` |
-| A registry path, option name or UI string | `constants.py` |
-| A new install-option combination | a copy of `constants.INSTALL_OPTIONS` plus one fixture in `conftest.py` |
-| An action against the *installed* product (start, stop, connect, query, create) | a method on `cubrid_cli.CubridCli`, and a case under `tests/OPS/` marked `action` |
-| A recorded product output format | a `parse_*` function in `state.py`; the cases exercise it against the real product -- no pasted sample |
-| A framework function every case reads the product through | a check in `tests/framework_checks.py`, fed input whose right answer is known |
-
-Lifecycle cases (`tests/LCM/`) work against the newer `windows/` + `wsl/`
-modules instead, and a few things go elsewhere for them:
-
-| You are adding | It goes in |
-|---|---|
+| A case | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/TRA/`, `tests/LCM/`), with its markers declared in the test module — `pytestmark` in a conftest is silently ignored |
+| A new install-option combination | a copy of `constants.INSTALL_OPTIONS` plus one fixture in `tests/conftest.py` |
+| A group of cases that only needs a working installation to act against | a `suite_installation` fixture in the category's conftest, delegating to `provisioning.provide_installation` — module scope, so it lasts exactly as long as the one file that uses it. It installs before the first case and uninstalls after the last |
 | A case that REMOVES the product | the test body itself, set up with `silent.install_cubrid_wsl` — and **no machine-state fixture**, which is what keeps it ahead of every case that provisions one |
 | A case that runs a SECOND bundle over an installation | the test body, reading the values it claims are unchanged before the action and comparing them after |
 | A second bundle to test against | `installer.alternate_path` in `settings.local.toml` — any build other than the one under test. It must differ: the BundleId is regenerated on every build, so a rebuild from identical source is a different bundle, while the SAME file gets the maintenance page instead |
-| Something a lifecycle case reads from the machine | the module that owns that surface — `windows/registry.py`, `windows/apps.py`, `windows/tray.py`, `windows/files.py`, `wsl/distro.py`, `wsl/cubrid.py` — one question per function, answered as a plain value |
+| Something read from Windows | the module that owns that surface — `windows/registry.py`, `windows/apps.py`, `windows/tray.py`, `windows/shortcuts.py`, `windows/files.py` — one question per function, answered as a plain value |
+| Something read or done inside WSL | `wsl/distro.py` for the distribution itself; `wsl/cubrid.py` for CUBRID in it — service and server control, csql, createdb, engine install |
+| A recorded product output format | a `parse_*` function in the `windows/` or `wsl/` module that reads it; the cases exercise it against the real product — no pasted sample |
+| A product value shared across cases | `constants.py` |
+| A framework function every case reads the product through | a check in `tests/framework_checks.py`, fed input whose right answer is known |
 
 ### Architecture Rule
 
-> **Add test cases to the test layer. Add reusable product checks to the
-> verification layer.**
+> **Test cases contain intent: steps, actions and assertions. Reusable
+> questions and actions against the machine go in `windows/` and `wsl/`, one
+> module per surface.**
 
 This keeps the framework maintainable as the test suite grows.

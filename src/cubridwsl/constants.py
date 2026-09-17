@@ -209,33 +209,10 @@ SERVICE_COMMAND_FAILURE_MARKER = ": fail"
 # --------------------------------------------------------------------------- #
 DEMODB_NAME = "demodb"
 
-# The tables the shipped demodb sample carries -- CUBRID's "olympic" dataset.
-#
-# Asserted as a SUBSET of what `db_class` reports, never as equality: an added
-# table is not a defect, a missing one is. The observed list is printed in the
-# run notes on every run, passing or failing, so a wrong entry here is one
-# constant edit and never a silent gap.
-#
-# Confirmed against a real machine: `db_class` reported exactly this set.
-DEMODB_TABLES = ("athlete", "code", "event", "game", "history", "nation",
-                 "olympic", "participant", "record", "stadium")
-
-# The one table OPS-002 reads row-for-row. Small, so `SELECT *` is cheap.
-DEMODB_KNOWN_TABLE = "code"
-
 # CUBRID's built-in administrator. demodb ships with no password for it, which
 # is why none is passed -- and why a password prompt would hang, so csql is
 # always given a user explicitly.
 CSQL_DBA = "dba"
-
-# OPS-002's scratch table. Named so a leftover from a failed run is obviously
-# this suite's and not a tester's.
-OPS_SCRATCH_TABLE = "qa_ops_scratch"
-
-# OPS-003 creates this database and deletes it again. `en_US` is the locale the
-# workbook's step names.
-OPS_TESTDB_NAME = "testdb"
-OPS_TESTDB_LOCALE = "en_US"
 
 # CUBRID's Linux engine installer (`CUBRID-<version>-Linux.x86_64.sh`) is a
 # self-extracting archive that PROMPTS, and there is no documented unattended
@@ -265,11 +242,6 @@ ENGINE_INSTALLER_ANSWER = "y"
 ENGINE_PACKAGE_RE = re.compile(
     r"^CUBRID-(?P<version>[0-9][0-9.]*(?:-[0-9a-f]{4,})?)-Linux",
     re.IGNORECASE)
-
-# The system catalog view listing every class, and the flag separating the
-# product's own catalog classes from a user's tables.
-CATALOG_CLASS_VIEW = "db_class"
-CATALOG_USER_CLASS_PREDICATE = "is_system_class = 'NO'"
 
 # --------------------------------------------------------------------------- #
 # Wizard UI strings -- wix_src/strings/*.wxl
