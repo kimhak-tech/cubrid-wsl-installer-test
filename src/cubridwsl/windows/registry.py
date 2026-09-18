@@ -106,6 +106,17 @@ def tray_binary_path() -> Path | None:
     return Path(str(raw)) if raw else None
 
 
+def desktop_folder() -> Path | None:
+    """The desktop the product put its shortcuts on, as it recorded it."""
+    raw = values().get("UsersDesktopFolder")
+    return Path(str(raw)) if raw else None
+
+
+def tray_shortcut_file() -> str | None:
+    """The Tray's desktop shortcut file name, as the product recorded it."""
+    return values().get("TrayAppLinkFile")
+
+
 def tray_registered_for_startup() -> bool:
     r"""Is CUBRID_WSL_TrayApp under HKCU\...\Run?
 

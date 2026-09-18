@@ -49,8 +49,8 @@ UNINSTALL_KEYS = (
 #     i410: Variable: WixBundleUILevel = 4
 #
 # It is the BOOTSTRAPPER_DISPLAY enum, and it is the product stating what it
-# did rather than the framework inferring it from the command line. INS-002
-# requires "no UI is displayed at any point"; this is the evidence.
+# did rather than the framework inferring it from the command line. LCM-004
+# records it as evidence that an unattended run drew nothing.
 #
 # Observed: 4 on the INS-001 wizard run, 3 on a /passive uninstall.
 # --------------------------------------------------------------------------- #
@@ -63,8 +63,9 @@ BURN_UI_LEVEL_FULL = 4          # the wizard
 # Install options -- the bal:Overridable variables in wix_src/bundle.wxs,
 # forwarded to the MSI as properties. These are the shipping defaults.
 #
-# TO ADD A SCENARIO: copy this dict and override the keys you want, then pass it
-# to the install fixture. See the README, "Adding a new test scenario".
+# TO ADD A SCENARIO: pass only the keys you change to the install verb, and
+# `{**INSTALL_OPTIONS, **changed}` to `check_post_install`. See the README,
+# "Adding a New Test Case".
 # --------------------------------------------------------------------------- #
 INSTALL_OPTIONS = {
     "REG_TRAY_APP": 1,          # register the Tray for auto-start at logon
@@ -75,10 +76,10 @@ INSTALL_OPTIONS = {
     "CUB_DEFAULT_WSL_NAME": "CUBRID-FOR-WSL",
 }
 
-# The two a CASE has to name: INS-004 overrides the mode and reads it back out
-# of the bundle's log, INS-006 overrides the name and reports which name was
-# refused. A product literal in a test file is a bug, so they are named here.
-# The other four are only ever dict keys, which is why they are not.
+# The two a CASE has to name: INS-004 overrides the mode, INS-006 overrides
+# the name and reports which name the bundle refused. A product literal in a
+# test file is a bug, so they are named here. The other four are only ever
+# dict keys, which is why they are not.
 OPTION_WSL2_MODE = "IS_WSL2_MODE"
 OPTION_WSL_NAME = "CUB_DEFAULT_WSL_NAME"
 
@@ -445,6 +446,10 @@ TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 # The Tray executable, as installed. Named here because reset stops it before
 # uninstalling -- see reset.stop_tray().
 TRAY_EXE = "cubrid_tray_app.exe"
+
+# The Tray's desktop shortcut, when the registry does not name it
+# (`TrayAppLinkFile`). The distribution's shortcut is `<WslName>.lnk`.
+TRAY_SHORTCUT_FILE = "cubrid_tray_app.lnk"
 
 # The popup menu, its About dialog and the guide it opens. The menu labels are
 # what the Tray appends at ShowContextMenu(); the driver matches on them because

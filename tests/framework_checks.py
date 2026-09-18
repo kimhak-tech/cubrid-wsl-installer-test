@@ -2,11 +2,9 @@
 
 Not test cases, and not about the machine either. Each check feeds a framework
 function input built in the test, whose correct answer is known, and compares.
-Every INS and OPS assertion reads the product through these functions -- the
-.lnk parser, the skip-on-prerequisite rule, the doubled-separator diagnosis,
-`state.diff` -- so a bug in one makes a case fail against a healthy product, or
-pass against a broken one, on every machine. When a case fails after these
-passed, the failure is the product's.
+A bug in a function the product is read through makes a case fail against a
+healthy product, or pass against a broken one, on every machine. When a case
+fails after these passed, the failure is the product's.
 
 No wsl.exe, no registry, no installer: runs on any OS in under a second. Run it
 after editing anything these checks name in `src/cubridwsl/`.
@@ -28,8 +26,7 @@ def test_the_shortcut_parser_reads_a_link_the_way_windows_writes_one(tmp_path, n
     """`read_shortcut` parses the .lnk binary format, in both string encodings.
 
     Shortcuts are parsed in pure Python rather than through WScript.Shell,
-    because the shortcut assertions run on the SILENT track too -- INS-002
-    applies INS-001's whole post-install set -- and a COM reader would give that
+    because the silent track reads them too, and a COM reader would give that
     track a pywinauto dependency the workbook defines it as not having.
     That choice is only safe if the parser is right, so it is pinned here --
     off Windows, in milliseconds, against a link built byte by byte.
@@ -282,13 +279,11 @@ def test_a_shortcut_with_a_doubled_separator_is_reported_precisely(note):
 
 
 def test_the_state_diff_compares_everything_except_what_it_says_it_ignores(note):
-    """`state.diff` is the whole of INS-002's value, so it is pinned here.
+    """`state.diff` compares everything except what it says it ignores.
 
-    INS-002 asserts the silent install produced the same machine as the wizard
-    install, and the workbook insists that be done by COMPARING SNAPSHOTS rather
-    than by re-listing INS-001's assertions. A diff that silently compared
-    nothing would pass forever and prove nothing -- which is the failure mode
-    worth catching in a second rather than after two install cycles.
+    A diff that silently compared nothing would pass forever and prove nothing
+    -- which is the failure mode worth catching in a second rather than after
+    two install cycles.
     """
     left = _bare_machine()
 

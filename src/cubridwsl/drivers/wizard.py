@@ -1,10 +1,10 @@
 """Wizard installer driver -- the second route to the same machine state.
 
-DELIBERATELY MINIMAL. It launches the bundle, advances the wizard on its
-defaults and completes. It does not set options, does not cancel and does not go
-Back. The point of this driver is to prove that a wizard install and a silent
-install reach a machine that passes the SAME assertions; anything beyond the
-default path adds maintenance before that claim is even established.
+DELIBERATELY MINIMAL. It walks the wizard forward -- installing, cancelling or
+uninstalling -- and never goes Back. The point of this driver is to prove that a
+wizard install and a silent install reach a machine that passes the SAME
+assertions; anything beyond the paths a case needs adds maintenance before that
+claim is even established.
 
 Five choices worth understanding before changing anything here:
 
@@ -48,6 +48,7 @@ from typing import Any, Callable
 
 from .. import config as config_mod, constants, preflight
 from ..windows import apps, registry
+from . import silent
 
 
 class WizardError(RuntimeError):
@@ -855,16 +856,19 @@ def _record_bundle_process(result: WizardResult,
                         f"{process.pid}) is still running")
 
 
-def install(package: config_mod.InstallerPackage, options: dict[str, Any],
-            log_path: Path, *, timeout: int, step_timeout: float = 120,
-            install_dir: str | None = None,
+def install(package: config_mod.InstallerPackage, settings: dict[str, Any],
+            log_path: Path, *, options: dict[str, Any] | None = None,
+            install_dir: str | None = None, step_timeout: float = 120,
             note: Callable[[str], None] | None = None) -> WizardResult:
-    """Drive an installation through the real wizard.
+    """Drive an installation through the real wizard, and wait until it lands.
 
     `options` are the bundle variables to SET on InstallOptionsDlg. Any that
     already match the shipping defaults are left alone -- the driver reads each
     checkbox before clicking it, so passing the defaults is a no-op rather than
     a double toggle.
+
+    On success it waits through `silent.wait_until_ready`, the same wait the
+    unattended route uses, so a case never races an install still landing.
 
     `install_dir` is wizard-only, and deliberately so: `ActionUpdateInstallFolder`
     overwrites INSTALLFOLDER whenever UILevel < 5, so a directory passed on a
@@ -877,6 +881,8 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
     """
     say = note or (lambda _text: None)
     preflight.require_elevation(preflight.WIZARD_REASON)
+    options = dict(options or {})
+    timeout = settings["timeouts"]["install_seconds"]
     unsupported = _unsupported_options(options)
     if unsupported:
         raise WizardError(
@@ -979,6 +985,10 @@ def install(package: config_mod.InstallerPackage, options: dict[str, Any],
 
     _record_bundle_process(result, process)
     result.duration_seconds = time.monotonic() - started
+    if result.ok:
+        silent.wait_until_ready(settings,
+                                {**constants.INSTALL_OPTIONS, **options},
+                                note=say)
     return result
 
 
@@ -1009,7 +1019,7 @@ def cancel(package: config_mod.InstallerPackage, log_path: Path, *,
     Finish button -- the same test the completion page gets.
 
     Like every driver here this one only DRIVES. Whether the machine is clean
-    afterwards is the case's question, and reset.residue_now answers it.
+    afterwards is the case's question, answered through `windows/` and `wsl/`.
     """
     say = note or (lambda _text: None)
     preflight.require_elevation(preflight.WIZARD_REASON)
@@ -1150,7 +1160,7 @@ def uninstall(package: config_mod.InstallerPackage, log_path: Path, *,
     assuming the button will be there.
 
     Like every driver here this one only DRIVES. Whether the machine is clean
-    afterwards is the case's question, and reset.residue_now answers it.
+    afterwards is the case's question, answered through `windows/` and `wsl/`.
     """
     say = note or (lambda _text: None)
     preflight.require_elevation(preflight.WIZARD_REASON)
@@ -1310,12 +1320,10 @@ def install_cubrid_wsl(package: config_mod.InstallerPackage,
     pages label that button `&Close`, so one click dismisses any of them, and a
     bundle window left open makes the next run refuse to start.
 
-    ONE ASYMMETRY WITH `silent.install_cubrid_wsl`, stated rather than hidden:
-    that one waits for the install to finish landing (demodb, the Tray, the
-    CUBRID service) and this one does not. No caller has yet needed a wizard
-    install to SUCCEED -- LCM-003 requires a refusal -- so the wait would be
-    speculative duplication of silent's. When an install case migrates and needs
-    it, move that wait into one place both drivers call rather than copying it.
+    Unlike `silent.install_cubrid_wsl` it does not wait for an install to
+    land: it closes whichever page the bundle answers with, so a successful
+    install is not what it drives. The full walk that installs and waits is
+    `install`.
     """
     say = note or (lambda _text: None)
     preflight.require_elevation(preflight.WIZARD_REASON)

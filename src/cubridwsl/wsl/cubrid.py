@@ -418,6 +418,37 @@ def is_ready(name: str, settings: dict[str, Any]) -> bool:
 
 
 # =========================================================================== #
+# The environment a user session gets
+# =========================================================================== #
+def login_environment(name: str, settings: dict[str, Any]) -> dict[str, str]:
+    """$CUBRID, $CUBRID_DATABASES and $PATH as a FRESH login shell sees them.
+
+    Empty when the shell could not be opened. Values are returned exactly as
+    printed, carriage returns included -- a CRLF ~/.cubrid.sh ends every value
+    in one, which is the defect this exists to catch.
+
+    Two choices the reading is worthless without:
+
+    * a LOGIN shell (`bash -lc`): the image has ~/.bash_profile source
+      ~/.cubrid.sh, and only a login shell reads .bash_profile;
+    * NO `env_setup` prefix, so it bypasses `run` above. Sourcing ~/.cubrid.sh
+      ourselves would make the environment look right even when nothing sets
+      it up for a real user session.
+    """
+    result = distro.run(
+        name,
+        'echo "CUBRID=$CUBRID"; '
+        'echo "CUBRID_DATABASES=$CUBRID_DATABASES"; '
+        'echo "PATH=$PATH"',
+        user=settings["distro"]["user"] or None, login=True, env_setup="",
+        timeout=settings["timeouts"]["wsl_command_seconds"])
+    if not result.ok:
+        return {}
+    return dict(line.split("=", 1) for line in result.stdout.split("\n")
+                if "=" in line)
+
+
+# =========================================================================== #
 # Databases
 # =========================================================================== #
 def databases(name: str, settings: dict[str, Any]) -> tuple[str, ...]:
