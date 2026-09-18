@@ -168,8 +168,8 @@ def assert_no_setup_window(titles: list[str], *, timeout: float = 60.0,
     exactly that behind.
 
     It WAITS first, rather than refusing on the first look. The window this most
-    often catches is not a human's: `reset.ensure_clean` runs an uninstall
-    immediately before this, and Burn's process can return while its own window
+    often catches is not a human's: `silent.uninstall_cubrid_wsl` runs an
+    uninstall immediately before this, and Burn's process can return while its own window
     is still closing. Refusing instantly turned that race into a failed run --
     the suite tripping over its own cleanup. (The uninstall is now /quiet and
     draws no window at all, so this wait is the second line of defence rather

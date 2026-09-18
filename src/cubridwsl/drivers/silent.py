@@ -233,13 +233,12 @@ def uninstall_with_command(uninstall_string: str, log_path: Path, *,
                            timeout: int, mode: str = "quiet") -> RunResult:
     """Uninstall through the Apps & Features command, as Windows would run it.
 
-    The string is passed in from observed machine state rather than
-    reconstructed here, so this driver keeps no dependency on the verification
-    layer.
+    The string is passed in from the machine rather than reconstructed here,
+    so this driver does not read the machine itself.
 
     `mode` defaults to QUIET, and that default is load-bearing rather than a
-    preference. This runs from `reset.ensure_clean`, immediately before the next
-    install. Under /passive Burn draws a progress window titled "CUBRID For WSL
+    preference. This runs from `uninstall_cubrid_wsl`, immediately before the
+    next install. Under /passive Burn draws a progress window titled "CUBRID For WSL
     Setup" and its parent process can return while that window is still closing
     -- and the wizard driver refuses to start while any window with that title
     is open, because it cannot tell a leftover apart from the one it is about to
@@ -397,13 +396,17 @@ def uninstall_cubrid_wsl(package: config_mod.InstallerPackage,
     # cycle. This is the only place the two meet, and it meets at call time.
     from ..windows import apps
 
+    # Stopped even when nothing is installed: an uninstall that failed to stop
+    # its own Tray leaves an orphan behind, and the next case that asserts the
+    # Tray is not running would report it as its own finding.
+    if tray.stop():
+        say(f"  cleanup    : stopped a running {constants.TRAY_EXE}")
+
     if not (registry.exists() or apps.is_listed()):
         say("  cleanup    : nothing installed")
         return None
 
     preflight.require_elevation()
-    if tray.stop():
-        say(f"  cleanup    : stopped a running {constants.TRAY_EXE}")
 
     name = registry.wsl_name()
     command = apps.uninstall_command()

@@ -1,14 +1,8 @@
 """The CUBRID WSL Tray application, as a running process and as a file on disk.
 
-Two independent probes for "is it running", neither needing a UI-automation
-library. The MUTEX exists exactly while the process does -- the Tray creates it
-at startup and Windows destroys it when the process exits, so its existence IS
-the answer. The WINDOW (class CUBRIDTrayApp) is a second, separate signal, and
-it is deliberately HIDDEN, so it can only be found by class and title, never by
-enumerating visible windows.
-
-They are reported separately because a disagreement is itself a finding: a
-mutex with no window is a Tray that started and failed to initialise.
+"Is it running" needs no UI-automation library: the Tray's MUTEX exists exactly
+while the process does -- the Tray creates it at startup and Windows destroys
+it when the process exits, so its existence IS the answer.
 """
 from __future__ import annotations
 
@@ -51,26 +45,6 @@ def is_running() -> bool:
         raise ProbeError(
             f"could not probe the Tray mutex {constants.TRAY_MUTEX!r}: "
             f"{type(exc).__name__}: {exc}") from exc
-
-
-def window_present() -> bool:
-    """Is the Tray's hidden window there? The second, independent probe.
-
-    Separate from `is_running` because a DISAGREEMENT between the two is itself
-    a finding: a mutex with no window is a Tray that started and failed to
-    initialise.
-
-    No LCM case calls this: they ask whether the Tray is GONE, and one probe
-    settles that. It is the INS cases -- which assert the Tray came UP, where a
-    half-started one is the interesting failure -- that read both, as
-    `state.read_tray` does today.
-    """
-    try:
-        return _window_exists()
-    except Exception as exc:
-        raise ProbeError(
-            f"could not probe the Tray window: {type(exc).__name__}: {exc}"
-        ) from exc
 
 
 def binary_path() -> Path | None:
@@ -116,17 +90,6 @@ def _mutex_exists(name: str) -> bool:
     if error == _ERROR_ACCESS_DENIED:
         return True
     raise OSError(error, f"OpenMutexW({name!r}) failed with error {error}")
-
-
-def _window_exists() -> bool:
-    import ctypes
-    from ctypes import wintypes
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.FindWindowW.restype = wintypes.HWND
-    user32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
-    return bool(user32.FindWindowW(constants.TRAY_WINDOW_CLASS,
-                                   constants.TRAY_WINDOW_TITLE))
 
 
 def stop() -> bool:

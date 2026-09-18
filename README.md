@@ -247,7 +247,7 @@ Test results are stored under `reports/<timestamp>/`:
 
 | File | Contents |
 |---|---|
-| `run.json` | which bundle (path + SHA-256), which account, elevated or not, which mode, and what each install did |
+| `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
 | `environment-checks/`, `framework-checks/` | each check session's own `junit.xml` and `run.json` |
 | `*.log` | the installer's own logs, plus the MSI's |

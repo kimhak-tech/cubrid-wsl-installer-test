@@ -193,11 +193,9 @@ SERVICE_SERVER_RUNNING_PREFIX = "server "
 #     @ cubrid master stop
 #     ++ cubrid master stop: success
 #
-# OPS-001 requires the stop and start ACTIONS to be confirmed, not merely a zero
-# exit code, so the command's own output is parsed (state.parse_service_command)
-# rather than trusted. A section with neither marker reads None -- unknown, not
-# failed. The server section is legitimately EMPTY when no database is started,
-# which is the normal post-install state.
+# A section with neither marker is unknown, not failed. The server section is
+# legitimately EMPTY when no database is started, which is the normal
+# post-install state.
 SERVICE_COMMAND_SUCCESS_MARKER = ": success"
 SERVICE_COMMAND_FAILURE_MARKER = ": fail"
 
@@ -443,8 +441,8 @@ TRAY_MUTEX = r"Global\CUBRID_WSL_Tray_App_Mutex"
 TRAY_WINDOW_CLASS = "CUBRIDTrayApp"
 TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 
-# The Tray executable, as installed. Named here because reset stops it before
-# uninstalling -- see reset.stop_tray().
+# The Tray executable, as installed. Named here because a clean-up uninstall
+# stops it first -- see windows.tray.stop().
 TRAY_EXE = "cubrid_tray_app.exe"
 
 # The Tray's desktop shortcut, when the registry does not name it

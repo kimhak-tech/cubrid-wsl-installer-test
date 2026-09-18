@@ -1,11 +1,7 @@
 """One installation, shared by a group of cases and removed when they finish.
 
-The counterpart to `conftest._provision`, and deliberately not the same thing.
-`_provision` establishes a NAMED MACHINE STATE that the verification layer is
-then asked about -- it snapshots the machine, builds an `Installation` and
-holds it for the rest of the session. This is for a group of cases that needs
-nothing more than a working installation to act against, and that wants it gone
-again afterwards.
+For a group of cases that needs nothing more than a working installation to act
+against, and that wants it gone again afterwards.
 
 It is a generator rather than a fixture because the SCOPE is what differs
 between groups, and a fixture's scope is fixed by its decorator. Each category's
@@ -23,9 +19,9 @@ whose subject is the removal of the product must install for itself, or the
 case that follows inherits a machine with nothing on it.
 
 No pytest import: this package is the framework the tests call, not a plugin,
-and the gate below is a plain assert -- which is what `_provision` uses for the
-same job. pytest reports an AssertionError raised in a fixture as an error
-against every case that requested it, carrying the message.
+and the gate below is a plain assert. pytest reports an AssertionError raised
+in a fixture as an error against every case that requested it, carrying the
+message.
 """
 from __future__ import annotations
 
