@@ -29,12 +29,9 @@ Test Case
        PASS / FAIL
 ```
 
-**Key principle:** drivers perform actions; the verification layer determines
-whether the resulting system state is correct. A driver never asserts, and a
-test never installs for itself — it asks for a fixture, so many tests share one
-installation. The exception is a case that **removes** the product: it cannot
-share a machine with anything, so it installs and uninstalls in its own test
-body (see `tests/LCM/`).
+**Key principle:** drivers perform actions; the test case asserts whether the
+resulting system state is correct, reading it through `windows/` and `wsl/`. A
+driver never asserts.
 
 ---
 
@@ -84,11 +81,13 @@ cubrid-wsl-installer-test/
 │   ├── preflight.py           # Session preconditions: Windows, elevation, account
 │   └── config.py              # Configuration loading
 ├── tests/
-│   ├── conftest.py            # Shared fixtures: machine states, run report
+│   ├── conftest.py            # Shared fixtures: run report, helpers more
+│   │                          #   than one category uses
 │   ├── environment_checks.py  # Not cases: is this machine ready to run them
 │   ├── framework_checks.py    # Not cases: do the framework's tools give right answers
 │   ├── INS/                   # Category 02, Installer Orchestration
-│   │   └── test_install_*.py
+│   │   ├── conftest.py        #   helpers only INS uses
+│   │   └── test_ins_*.py
 │   ├── OPS/                   # Category 03, CUBRID Operational
 │   │   ├── conftest.py        #   one shared installation for the module below
 │   │   └── test_ops_cubrid_operational.py
@@ -109,15 +108,15 @@ answering its own questions and performing the actions that surface has. A
 function belongs in the module that owns its surface; do not add a shared
 catch-all module to reuse it.
 
-There are two ways a case gets a machine, and the difference is what the case
-does to it. A **machine-state fixture** in `tests/conftest.py` establishes a
-named state that the verification layer is then asked about, and holds it for
-the session. `provisioning.py` is for a group of cases that needs nothing more
-than a working installation to act against and wants it gone afterwards: a
-category's own conftest declares the fixture at the scope its cases need and
-delegates the body with `yield from`. Sharing either way is only sound for cases
-that do not CONSUME the installation — LCM-001 and LCM-002 remove the product,
-so they install for themselves inside the test body and take no such fixture.
+A case gets its machine in one of two ways, decided by what it does to it:
+
+- **In its own test body**, when the installation itself is the subject —
+  how it is installed, or how it is removed.
+- **A `suite_installation` in the category's conftest**, when a group of cases
+  only needs a working installation to act against. It is built on
+  `provisioning.py` and removed after the group.
+
+Sharing is only sound for cases that do not CONSUME the installation.
 
 ---
 
@@ -198,10 +197,8 @@ Run a specific case, or a whole category:
 .\run-tests.ps1 -Case OPS       # a bare category runs every case in it
 ```
 
-Every suite installs once per **machine state** it needs, not once per case —
-which is what keeps a full run in minutes rather than hours. To see what a given
-selection actually costs before running it, `pytest --setup-plan -m silent`
-lists each session fixture exactly once where it is set up.
+To see where a selection installs before running it, use
+`pytest --setup-plan` with the same `-m` or `-k` filter.
 
 List every case without executing anything — this, not a table in this file, is
 the current inventory:
@@ -250,12 +247,11 @@ Test results are stored under `reports/<timestamp>/`:
 
 | File | Contents |
 |---|---|
-| `run.json` | which bundle (path + SHA-256), which account, elevated or not, which mode, and what each install did |
+| `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
 | `environment-checks/`, `framework-checks/` | each check session's own `junit.xml` and `run.json` |
-| `install-*.log` | the installer's own logs, plus the MSI's |
+| `*.log` | the installer's own logs, plus the MSI's |
 | `state-*.json` | the machine as the verification layer saw it |
-| `comparison-*.json` | every check, expected vs actual |
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require
 > an elevated PowerShell. The UI tests also control the real mouse and keyboard.
@@ -339,7 +335,7 @@ def test_ops_005_something(suite_installation, settings, note):
 | You are adding | It goes in |
 |---|---|
 | A case | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/TRA/`, `tests/LCM/`), with its markers declared in the test module — `pytestmark` in a conftest is silently ignored |
-| A new install-option combination | a copy of `constants.INSTALL_OPTIONS` plus one fixture in `tests/conftest.py` |
+| A new install-option combination | the changed options only, as a dict inside the case, passed to the install driver |
 | A group of cases that only needs a working installation to act against | a `suite_installation` fixture in the category's conftest, delegating to `provisioning.provide_installation` — module scope, so it lasts exactly as long as the one file that uses it. It installs before the first case and uninstalls after the last |
 | A case that REMOVES the product | the test body itself, set up with `silent.install_cubrid_wsl` — and **no machine-state fixture**, which is what keeps it ahead of every case that provisions one |
 | A case that runs a SECOND bundle over an installation | the test body, reading the values it claims are unchanged before the action and comparing them after |

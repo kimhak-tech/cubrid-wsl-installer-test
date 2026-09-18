@@ -153,10 +153,9 @@ def text_in_logs(logs: list[Path], fragments: list[str]) -> str:
 
 
 def ui_level_from_log(log_path: Path) -> int | None:
-    """The UI level Burn RECORDED for this run.
+    """The UI level Burn RECORDED for this run: 2 quiet, 3 passive, 4 wizard.
 
-    INS-002 has to show that no UI was displayed at any point, and the bundle
-    saying what it did is the only evidence that carries.
+    What the bundle DID, as opposed to what the command line asked for.
     """
     try:
         return int(variable_from_log(log_path, constants.BURN_UI_LEVEL_VARIABLE))
@@ -234,13 +233,12 @@ def uninstall_with_command(uninstall_string: str, log_path: Path, *,
                            timeout: int, mode: str = "quiet") -> RunResult:
     """Uninstall through the Apps & Features command, as Windows would run it.
 
-    The string is passed in from observed machine state rather than
-    reconstructed here, so this driver keeps no dependency on the verification
-    layer.
+    The string is passed in from the machine rather than reconstructed here,
+    so this driver does not read the machine itself.
 
     `mode` defaults to QUIET, and that default is load-bearing rather than a
-    preference. This runs from `reset.ensure_clean`, immediately before the next
-    install. Under /passive Burn draws a progress window titled "CUBRID For WSL
+    preference. This runs from `uninstall_cubrid_wsl`, immediately before the
+    next install. Under /passive Burn draws a progress window titled "CUBRID For WSL
     Setup" and its parent process can return while that window is still closing
     -- and the wizard driver refuses to start while any window with that title
     is open, because it cannot tell a leftover apart from the one it is about to
@@ -287,60 +285,74 @@ READY_SETTLE_SECONDS = 300.0
 
 def install_cubrid_wsl(package: config_mod.InstallerPackage,
                        settings: dict[str, Any], log_path: Path, *,
+                       options: dict[str, Any] | None = None,
                        note: Note | None = None) -> RunResult:
     """Install CUBRID for WSL unattended, and wait until it is actually usable.
 
-    /quiet with NO property overrides. `constants.INSTALL_OPTIONS` IS the set
-    of shipping defaults, so passing them would test that the command line
-    works rather than that the defaults do -- and reaching a default
-    installation is all this step is for.
+    /quiet. `options` are passed as property overrides and should name ONLY
+    what a case changes: `constants.INSTALL_OPTIONS` IS the set of shipping
+    defaults, so passing them all would test that the command line works
+    rather than that the defaults do.
 
-    It REPORTS rather than raises when the bundle does not report success, for
-    the same reason `wizard.install_cubrid_wsl` does: one case launches a bundle
-    it EXPECTS to be rejected, and a verb that raised could not serve it. A
-    set-up step is protected instead by the gate every case already carries --
-    `if not registry.exists(): pytest.fail(...)` -- which is the better check
-    anyway, because it asks the machine rather than trusting an exit code.
-
-    Nothing is waited for when the bundle did not report success. There is no
-    install to settle, and the full settle budget spent on a machine that was
-    never installed is five minutes of nothing.
+    It REPORTS rather than raises when the bundle does not report success: some
+    cases launch a bundle they EXPECT to be rejected, and a verb that raised
+    could not serve them. Nothing is waited for then -- there is no install to
+    settle, and the full budget spent on a machine never installed is five
+    minutes of nothing.
     """
     say: Note = note or (lambda _text: None)
     preflight.require_windows()
     preflight.require_elevation()
+    options = dict(options or {})
 
-    say(f"  install    : {package.path.name}")
-    result = install(package, {}, log_path,
+    say(f"  install    : {package.path.name} {as_properties(options)}")
+    result = install(package, options, log_path,
                      timeout=settings["timeouts"]["install_seconds"],
                      mode="quiet")
     say(f"  install    : {result.describe()}")
 
     if result.ok:
-        _wait_until_ready(settings, say)
+        wait_until_ready(settings, {**constants.INSTALL_OPTIONS, **options},
+                         note=say)
     else:
         say("  install    : the bundle did not report success, so nothing is "
             "waited for -- there is no install to settle")
     return result
 
 
-def _wait_until_ready(settings: dict[str, Any], say: Note) -> None:
-    """Poll until the installation has finished landing.
+def wait_until_ready(settings: dict[str, Any], options: dict[str, Any], *,
+                     note: Note | None = None) -> None:
+    """Poll until an installation made with `options` has finished landing.
+
+    Three effects land AFTER the bundle exits -- demodb (ActionCreateDemodb),
+    the Tray (ActionLaunchTrayApp, asyncNoWait) and CUBRID's broker and manager
+    (ActionStartCubridService returns once the MASTER is up) -- so a reading
+    taken the moment the installer returns reports a startup in progress as
+    components that failed. demodb and the Tray are waited for only when the
+    options ask for them: "still absent" is never waited for.
+
+    Shared by both install routes, so they cannot disagree about "installed".
 
     Reports rather than raises on a timeout. A component that never came up is
     a finding about the PRODUCT and belongs to whichever case asserts it, not
-    to a set-up error that reads like the framework broke -- and everything
-    else about the machine is still worth testing.
+    to a set-up error that reads like the framework broke.
     """
+    say: Note = note or (lambda _text: None)
+    want_demodb = bool(int(options["CREATE_DEMODB"]))
+    want_tray = bool(int(options["START_TRAY_APP"]))
+    awaited = constants.SERVICE_COMPONENTS_AWAITED
     deadline = time.monotonic() + READY_SETTLE_SECONDS
     while True:
         name = registry.wsl_name()
         ready = (registry.exists() and distro.exists(name)
-                 and tray.is_running()
-                 and cubrid.is_ready(name, settings))
+                 and (tray.is_running() or not want_tray)
+                 and cubrid.service_status(name, settings).all_running(awaited)
+                 and (cubrid.is_database_exists(name, constants.DEMODB_NAME,
+                                                settings) or not want_demodb))
         if ready:
-            say(f"  install    : settled -- distro {name!r}, Tray up, "
-                "CUBRID running, demodb present")
+            say(f"  install    : settled -- distro {name!r}, CUBRID running"
+                + (", Tray up" if want_tray else "")
+                + (", demodb present" if want_demodb else ""))
             return
         if time.monotonic() >= deadline:
             say(f"  install    : did NOT fully settle in "
@@ -384,13 +396,17 @@ def uninstall_cubrid_wsl(package: config_mod.InstallerPackage,
     # cycle. This is the only place the two meet, and it meets at call time.
     from ..windows import apps
 
+    # Stopped even when nothing is installed: an uninstall that failed to stop
+    # its own Tray leaves an orphan behind, and the next case that asserts the
+    # Tray is not running would report it as its own finding.
+    if tray.stop():
+        say(f"  cleanup    : stopped a running {constants.TRAY_EXE}")
+
     if not (registry.exists() or apps.is_listed()):
         say("  cleanup    : nothing installed")
         return None
 
     preflight.require_elevation()
-    if tray.stop():
-        say(f"  cleanup    : stopped a running {constants.TRAY_EXE}")
 
     name = registry.wsl_name()
     command = apps.uninstall_command()

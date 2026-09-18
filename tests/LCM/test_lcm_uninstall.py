@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from cubridwsl import constants
 from cubridwsl.drivers import silent, wizard
-from cubridwsl.windows import apps, files, registry, tray
-from cubridwsl.wsl import distro
+from cubridwsl.windows import apps, registry, tray
 
 pytestmark = [pytest.mark.destructive]
 
@@ -32,7 +30,8 @@ pytestmark = [pytest.mark.destructive]
 
 @pytest.mark.silent
 def test_lcm_001_uninstall_through_apps_and_features(installer, settings,
-                                                     run_dir, note):
+                                                     run_dir, note,
+                                                     check_product_absent):
 
     # ----------------------------------------------------------------- #
     # 1. Clean up -- remove anything an earlier run left behind
@@ -70,32 +69,8 @@ def test_lcm_001_uninstall_through_apps_and_features(installer, settings,
     # ----------------------------------------------------------------- #
     # The exit code is not checked: ActionUninstallWsl is Return="ignore", so
     # the bundle reports success whether or not the distribution went.
-    assert not apps.is_listed(), "still listed in Windows Apps & Features"
-
-    assert not distro.exists(wsl_name), (
-        f"the WSL distribution {wsl_name!r} is still registered")
-
-    assert not registry.exists(), (
-        rf"the registry key HKCU\{constants.PRODUCT_KEY} still exists")
-
-    assert not registry.tray_registered_for_startup(), (
-        f"the Run value {constants.RUN_VALUE_TRAY} still exists")
-
-    # Registered unconditionally by the installer, so it must go on every route.
-    assert not registry.starter_registered_for_startup(), (
-        f"the Run value {constants.RUN_VALUE_STARTER} still exists")
-
-    assert not tray.is_running(), "the Tray is still running"
-
-    assert not tray.binary_exists(tray_binary), (
-        f"the Tray binary is still on disk at {tray_binary}")
-
-    leftovers = files.leftovers(wsl_name)
-    for item in leftovers:
-        note(f"  LCM-001-leftover   : {item}")
-    assert not leftovers, (
-        f"{len(leftovers)} artifact(s) still on disk:\n"
-        + "\n".join(f"      {item}" for item in leftovers))
+    check_product_absent(wsl_name, after="the Apps & Features uninstall",
+                         tray_binary=tray_binary)
 
     # ----------------------------------------------------------------- #
     # 5. Clean up -- remove anything the uninstall under test did not
@@ -111,7 +86,8 @@ def test_lcm_001_uninstall_through_apps_and_features(installer, settings,
 
 @pytest.mark.ui
 def test_lcm_002_uninstall_by_rerunning_the_same_bundle(installer, settings,
-                                                        run_dir, note):
+                                                        run_dir, note,
+                                                        check_product_absent):
 
     # ----------------------------------------------------------------- #
     # 1. Clean up -- remove anything an earlier run left behind
@@ -155,32 +131,8 @@ def test_lcm_002_uninstall_by_rerunning_the_same_bundle(installer, settings,
     assert not result.error, (
         f"re-running the installed bundle did not complete an uninstall: {result.error}")
 
-    assert not apps.is_listed(), "still listed in Windows Apps & Features"
-
-    assert not distro.exists(wsl_name), (
-        f"the WSL distribution {wsl_name!r} is still registered")
-
-    assert not registry.exists(), (
-        rf"the registry key HKCU\{constants.PRODUCT_KEY} still exists")
-
-    assert not registry.tray_registered_for_startup(), (
-        f"the Run value {constants.RUN_VALUE_TRAY} still exists")
-
-    # Registered unconditionally by the installer, so it must go on every route.
-    assert not registry.starter_registered_for_startup(), (
-        f"the Run value {constants.RUN_VALUE_STARTER} still exists")
-
-    assert not tray.is_running(), "the Tray is still running"
-
-    assert not tray.binary_exists(tray_binary), (
-        f"the Tray binary is still on disk at {tray_binary}")
-
-    leftovers = files.leftovers(wsl_name)
-    for item in leftovers:
-        note(f"  LCM-002-leftover   : {item}")
-    assert not leftovers, (
-        f"{len(leftovers)} artifact(s) still on disk:\n"
-        + "\n".join(f"      {item}" for item in leftovers))
+    check_product_absent(wsl_name, after="the maintenance-page uninstall",
+                         tray_binary=tray_binary)
 
     # ----------------------------------------------------------------- #
     # 5. Clean up -- remove anything the uninstall under test did not
