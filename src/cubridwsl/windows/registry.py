@@ -97,13 +97,15 @@ def install_dir() -> Path | None:
 def tray_binary_path() -> Path | None:
     """Where the product put the Tray executable, as IT recorded it.
 
-    Not composed from `install_dir()` and `constants.TRAY_EXE`: a composed path
-    is this framework's opinion of where the file should be, and a case
-    asserting the binary was DELETED would then pass by looking in the wrong
-    place.
+    Both halves come from the product's key -- `TrayAppFile` is a bare file
+    name, relative to `InstallDir` -- and never from `constants.TRAY_EXE`: a
+    composed path is this framework's opinion of where the file should be, and
+    a case asserting the binary was DELETED would then pass by looking in the
+    wrong place. So would the bare name on its own, resolved against the
+    current directory.
     """
-    raw = values().get("TrayAppFile")
-    return Path(str(raw)) if raw else None
+    directory, name = install_dir(), values().get("TrayAppFile")
+    return directory / str(name) if directory and name else None
 
 
 def desktop_folder() -> Path | None:

@@ -7,13 +7,12 @@ Both paths come from what the product recorded in its registry key -- never a
 hard-coded desktop or name -- so a custom-name install still resolves. Ask
 while the product is installed: the uninstall removes that key.
 
-Existence only, for now. Whether each link resolves to a target on disk with
-the right icon is not asked yet, and the Tray's would fail: the product builds
-its target as `InstallDir + "\\" + TrayAppFile` while `InstallDir` already ends
-in a backslash, so Windows saves the link with no target path.
+Targets and icons are not asked about. Opening the Tray's shortcut is: whether
+the Tray then starts is the proof that its target is right.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .. import constants
@@ -47,3 +46,14 @@ def tray_shortcut_exists() -> bool:
     """Is the Tray's desktop shortcut there?"""
     path = tray_shortcut_path()
     return bool(path) and path.is_file()
+
+
+def open_tray_shortcut() -> None:
+    """Open the Tray's shortcut as a double-click does: the Shell's "open" verb.
+
+    Returns at once; whatever the shortcut starts is the caller's to wait for.
+    """
+    path = tray_shortcut_path()
+    if not (path and path.is_file()):
+        raise FileNotFoundError(f"the Tray's desktop shortcut is not there: {path}")
+    os.startfile(str(path))  # type: ignore[attr-defined]

@@ -66,7 +66,8 @@ cubrid-wsl-installer-test/
 │   │   ├── registry.py        #   what the PRODUCT wrote about itself
 │   │   ├── apps.py            #   the Apps & Features entry, and its
 │   │   │                      #     Uninstall button
-│   │   ├── tray.py            #   the Tray, as a process and as a file
+│   │   ├── tray.py            #   the Tray: as a process, as a file, and as
+│   │   │                      #     a menu, tooltip and dialogs to drive
 │   │   ├── shortcuts.py       #   the desktop shortcuts the installer created
 │   │   └── files.py           #   install directories and leftovers
 │   ├── wsl/                   # What the product left INSIDE WSL
@@ -84,7 +85,6 @@ cubrid-wsl-installer-test/
 │   ├── conftest.py            # Shared fixtures: run report, helpers more
 │   │                          #   than one category uses
 │   ├── environment_checks.py  # Not cases: is this machine ready to run them
-│   ├── framework_checks.py    # Not cases: do the framework's tools give right answers
 │   ├── INS/                   # Category 02, Installer Orchestration
 │   │   ├── conftest.py        #   helpers only INS uses
 │   │   └── test_ins_*.py
@@ -92,9 +92,9 @@ cubrid-wsl-installer-test/
 │   │   ├── conftest.py        #   one shared installation for the module below
 │   │   └── test_ops_cubrid_operational.py
 │   ├── TRA/                   # Category 04, CUBRID Control Tray
-│   │   ├── conftest.py        #   the Tray driver and a CUBRID CLI bound to
-│   │   │                      #     the machine `silent_install` left
-│   │   └── test_tray.py
+│   │   ├── conftest.py        #   one shared installation for the module
+│   │   │                      #     below, and a running Tray
+│   │   └── test_tra_control_tray.py
 │   └── LCM/                   # Category 05, Lifecycle Management
 │       ├── conftest.py        #   one shared installation, for the two cases
 │       │                      #     below that do NOT consume it
@@ -157,16 +157,31 @@ Example:
 ```toml
 [installer]
 path = "C:/CUBRID/build/CUBRID-11.4-For-WSL-1.0.0-0003-win64.exe"
+alternate_path = "C:/CUBRID/build/CUBRID-11.4-For-WSL-1.0.0-0003-win64-old.exe"
 ```
 
-Two things to know about that path:
+| Key | Which bundle | Needed by |
+|---|---|---|
+| `path` | the bundle under test | every case that installs |
+| `alternate_path` | a second, **different build** of the installer — "Bundle B" | only LCM-003 and LCM-004, the duplicate-install cases; leave it empty if you do not run them |
 
-- **Put it in `settings.local.toml`, not `settings.toml`.** The first is
+Things to know about those paths:
+
+- **Put them in `settings.local.toml`, not `settings.toml`.** The first is
   gitignored; the second is committed, so a path that exists only on your
-  machine would break every teammate's clone. The environment checks enforce this.
-- **Keep the installer's shipped filename.** The version fields are read *out of*
-  the name, and INS-001 checks the CUBRID reported inside the distribution
-  against them. A renamed file is refused rather than silently tested.
+  machine would break every teammate's clone. The environment checks enforce
+  this for both keys.
+- **Keep the installer's shipped filename for `path`.** The version fields are
+  read *out of* the name, and INS-001 checks the CUBRID reported inside the
+  distribution against them. A renamed file is refused rather than silently
+  tested.
+- **`alternate_path` may be renamed, but it must be a different build.** Nothing
+  reads a version from Bundle B, so a hand-renamed file such as `...-old.exe` is
+  fine. What matters is that it is not the same bytes as `path`: Burn offers the
+  bundle that installed the product its maintenance page, and refuses any other
+  build — even a rebuild of the same source and version, because the BundleId
+  changes on every build. The run fails with a clear message if both keys name
+  the same build (compared by SHA-256, not by filename).
 
 Then run the checks on their own:
 
@@ -205,7 +220,7 @@ the current inventory:
 
 ```powershell
 .\run-tests.ps1 -CollectOnly          # list every test case
-.\run-tests.ps1 checks -CollectOnly   # list the environment and framework checks
+.\run-tests.ps1 checks -CollectOnly   # list the environment checks
 .\run-tests.ps1 silent -CollectOnly   # list the silent test cases
 .\run-tests.ps1 ui -CollectOnly       # list the UI test cases
 .\run-tests.ps1 tray -CollectOnly     # list the Control Tray test cases
@@ -222,22 +237,19 @@ always uninstalls `/quiet`, because a `/passive` uninstall draws a window the
 wizard driver cannot tell apart from the one it is about to open.
 
 Every run, including a single `-Case` (but not `-CollectOnly`, which only
-lists), starts with two check files, once each:
+lists), starts with the environment checks, once:
 
 | File | Question | Fails when |
 |---|---|---|
 | `tests/environment_checks.py` | Is **this machine** ready to run the cases? | the installer path is wrong, WSL does not answer, a setting is missing |
-| `tests/framework_checks.py` | Do the **framework's own tools** give right answers? | a bug in `src/cubridwsl/` would mis-read the product on every machine |
 
-Both always run, so one run shows every setup problem, and a failure in either
-stops the run before anything is installed: a broken setup fails in a second
-rather than after a two-minute install. Neither is a test case -- their
-names do not match pytest's `test_*.py`, so they are only ever run by path -- and
-the run ends with separate counts:
+A failure there stops the run before anything is installed: a broken setup
+fails in a second rather than after a two-minute install. The checks are not
+test cases -- the filename does not match pytest's `test_*.py`, so it is only
+ever run by path -- and the run ends with separate counts:
 
 ```text
 Environment checks : 6 passed, 0 failed, 0 skipped
-Framework checks   : 5 passed, 0 failed, 0 skipped
 Cases              : N passed, 0 failed, 0 skipped
 ```
 
@@ -249,9 +261,8 @@ Test results are stored under `reports/<timestamp>/`:
 |---|---|
 | `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
-| `environment-checks/`, `framework-checks/` | each check session's own `junit.xml` and `run.json` |
+| `environment-checks/` | the check session's own `junit.xml` and `run.json` |
 | `*.log` | the installer's own logs, plus the MSI's |
-| `state-*.json` | the machine as the verification layer saw it |
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require
 > an elevated PowerShell. The UI tests also control the real mouse and keyboard.
@@ -259,8 +270,9 @@ Test results are stored under `reports/<timestamp>/`:
 > Two safety rules are enforced in code: `wsl --shutdown` is never issued (it is
 > machine-global and would stop Docker Desktop too), and no distribution is ever
 > touched implicitly — every call names its target, and `safety.protected_distros`
-> guards the rest. If the machine cannot be returned to a clean state, the
-> framework stops and prints the exact commands instead of deleting anything.
+> guards the rest. Nothing is ever removed except through the product's own
+> uninstaller; whatever a clean-up uninstall leaves behind is named in the run
+> notes rather than deleted.
 
 ---
 
@@ -344,7 +356,6 @@ def test_ops_005_something(suite_installation, settings, note):
 | Something read or done inside WSL | `wsl/distro.py` for the distribution itself; `wsl/cubrid.py` for CUBRID in it — service and server control, csql, createdb, engine install |
 | A recorded product output format | a `parse_*` function in the `windows/` or `wsl/` module that reads it; the cases exercise it against the real product — no pasted sample |
 | A product value shared across cases | `constants.py` |
-| A framework function every case reads the product through | a check in `tests/framework_checks.py`, fed input whose right answer is known |
 
 ### Architecture Rule
 

@@ -29,8 +29,7 @@ def suite_installation(installer, settings, run_dir,
     the cases have one lifetime and the teardown lands after OPS-004 rather
     than at the end of the run.
 
-    Deliberately absent from INSTALL_FIXTURE_ORDER: OPS-004 replaces the CUBRID
-    engine and nothing undoes it, so this installation must never be one
-    another category reads.
+    Never shared with another category: OPS-004 replaces the CUBRID engine and
+    nothing undoes it.
     """
     yield from provide_installation(installer, settings, run_dir, note, "ops")

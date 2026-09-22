@@ -60,9 +60,6 @@ cubrid_command_seconds = 300
 # OPS-004 downloads a CUBRID engine package (~100 MB) inside the distribution
 # and runs its installer. Neither fits the per-command budget above.
 upgrade_seconds = 1200
-# demodb creation is dispatched asynchronously and can finish after the
-# installer has already exited, so the install fixture polls for it.
-settle_seconds = 300
 
 [upgrade]
 # OPS-004 -- the CUBRID ENGINE installed OVER the one the WSL image ships.

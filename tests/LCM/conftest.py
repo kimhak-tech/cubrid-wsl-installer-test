@@ -23,9 +23,5 @@ def suite_installation(installer, settings, run_dir,
     Module scope because this module IS the group, so the installation and the
     suite have one lifetime and the teardown lands after the last case rather
     than at the end of the run.
-
-    Deliberately absent from INSTALL_FIXTURE_ORDER: LCM must keep scoring -1 in
-    `_group_key` so it still runs ahead of every case that provisions a shared
-    machine.
     """
     yield from provide_installation(installer, settings, run_dir, note, "lcm")

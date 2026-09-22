@@ -50,14 +50,13 @@ UNINSTALL_KEYS = (
 #
 # It is the BOOTSTRAPPER_DISPLAY enum, and it is the product stating what it
 # did rather than the framework inferring it from the command line. LCM-004
-# records it as evidence that an unattended run drew nothing.
+# records it as evidence that an unattended run drew nothing:
+#
+#     2 = /quiet (no UI)   3 = /passive (progress bar only)   4 = the wizard
 #
 # Observed: 4 on the INS-001 wizard run, 3 on a /passive uninstall.
 # --------------------------------------------------------------------------- #
 BURN_UI_LEVEL_VARIABLE = "WixBundleUILevel"
-BURN_UI_LEVEL_NONE = 2          # /quiet   -- no UI at all
-BURN_UI_LEVEL_PASSIVE = 3       # /passive -- a progress bar, no prompts
-BURN_UI_LEVEL_FULL = 4          # the wizard
 
 # --------------------------------------------------------------------------- #
 # Install options -- the bal:Overridable variables in wix_src/bundle.wxs,
@@ -121,34 +120,8 @@ CUBRID_DATABASES = "/home/cubrid/CUBRID/databases"
 SERVICE_COMPONENTS = ("master", "server", "broker", "manager")
 SERVICE_SECTION_PREFIX = "@ cubrid "
 
-# The components INS-001 requires to be RUNNING after a default install.
-#
-# `master` is added to what the workbook lists because it is the ONE component
-# the product itself guarantees: cubrid_starter.cpp polls `IsMasterRunning()`
-# and returns as soon as it is up.
-#
-# `server` is PARSED but NOT REQUIRED, and this is a KNOWN COVERAGE GAP against
-# the workbook rather than a judgement that it does not matter. INS-001 lists
-# "server, broker and manager RUNNING"; the check was implemented, it worked,
-# and it was then switched off deliberately.
-#
-# What it found, on build 11.4-1.0.0-0003 with everything else healthy:
-#
-#     @ cubrid server status
-#     @ cubrid pl status          <- the section is EMPTY
-#
-# That section lists STARTED DATABASES. demodb exists in databases.txt, but
-# nothing starts it: CUBRID's stock cubrid.conf leaves `server=` commented out,
-# so `cubrid service start` brings up the master, the broker and the manager
-# and no database. Whether that is a defect (the image should set
-# `server=demodb`) or correct (starting a database is OPS-001's job) is open
-# with development.
-#
-# Restoring the assertion is adding "server" back to this tuple. It is still
-# read every run and printed in the notes, so the evidence keeps arriving.
-SERVICE_COMPONENTS_EXPECTED_RUNNING = ("master", "broker", "manager")
-
-# The subset the install fixture WAITS for, which is not the same list.
+# The components an install is WAITED for (`silent.wait_until_ready`), and a
+# service start or stop confirmed by (`wsl.cubrid`).
 #
 # The installer starts CUBRID asynchronously -- ActionStartCubridService is
 # Return="asyncNoWait" and cubrid_starter.cpp nohup's `cubrid service start`
@@ -185,19 +158,6 @@ SERVICE_EXPECTED_BROKERS = ("query_editor", "broker1")
 SERVICE_NOT_RUNNING_MARKER = "is not running"
 SERVICE_IS_RUNNING_MARKER = "is running"
 SERVICE_SERVER_RUNNING_PREFIX = "server "
-
-# `cubrid service start` and `cubrid service stop` report per component the same
-# way `status` does -- one "@ cubrid <component> <verb>" section each, whose body
-# carries the verdict:
-#
-#     @ cubrid master stop
-#     ++ cubrid master stop: success
-#
-# A section with neither marker is unknown, not failed. The server section is
-# legitimately EMPTY when no database is started, which is the normal
-# post-install state.
-SERVICE_COMMAND_SUCCESS_MARKER = ": success"
-SERVICE_COMMAND_FAILURE_MARKER = ": fail"
 
 # --------------------------------------------------------------------------- #
 # Category 03, CUBRID Operational
@@ -435,11 +395,10 @@ MSI_DIALOG_CLASS_PREFIX = "MsiDialog"
 # automation: the process creates it at startup (CreateMutexA) and Windows
 # destroys it when the process exits, so its existence IS the answer. The window
 # is a second, independent signal -- and it is deliberately HIDDEN, so it can
-# only be found by class and title, never by enumerating visible windows.
+# only be found by class, never by enumerating visible windows.
 # --------------------------------------------------------------------------- #
 TRAY_MUTEX = r"Global\CUBRID_WSL_Tray_App_Mutex"
 TRAY_WINDOW_CLASS = "CUBRIDTrayApp"
-TRAY_WINDOW_TITLE = "CUBRID Service Tray"
 
 # The Tray executable, as installed. Named here because a clean-up uninstall
 # stops it first -- see windows.tray.stop().
@@ -449,11 +408,15 @@ TRAY_EXE = "cubrid_tray_app.exe"
 # (`TrayAppLinkFile`). The distribution's shortcut is `<WslName>.lnk`.
 TRAY_SHORTCUT_FILE = "cubrid_tray_app.lnk"
 
-# The popup menu, its About dialog and the guide it opens. The menu labels are
+# The popup menu, its About dialog and the guide Guide opens. The menu labels are
 # what the Tray appends at ShowContextMenu(); the driver matches on them because
 # no persistent HMENU exists to index by command ID from outside the process.
 TRAY_ABOUT_TITLE = "About CUBRID Service Tray"
 TRAY_MENU_ITEMS = ("About", "CUBRID Start", "CUBRID Stop", "Guide", "Exit")
+# TrayApp::MENU_EXIT. The one command sent WITHOUT opening the menu: a clean-up
+# stop posts it so the Tray removes its own icon (`Shutdown()` -> NIM_DELETE).
+TRAY_EXIT_COMMAND = 1005
+# CUB_GUIDE_FILE in CMakeLists.txt, installed beside the Tray.
 TRAY_GUIDE_FILE = "cubrid_guide.html"
 
 # The notification-area tooltip, which is the only place the Tray REPORTS the
