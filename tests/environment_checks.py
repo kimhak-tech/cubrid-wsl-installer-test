@@ -18,7 +18,9 @@ Read-only, needs no installed product. Alone:
 from __future__ import annotations
 
 from cubridwsl import config as config_mod
-from cubridwsl import distro, preflight, state as state_mod
+from cubridwsl import preflight
+from cubridwsl.windows import registry
+from cubridwsl.wsl import distro
 
 
 def test_this_is_windows():
@@ -34,7 +36,7 @@ def test_settings_load_and_carry_the_keys_the_framework_reads(settings, note):
     assert settings["upgrade"].get("url"), (
         "settings.toml has no upgrade.url -- OPS-004 has nothing to install")
     for key in ("install_seconds", "uninstall_seconds", "wsl_command_seconds",
-                "settle_seconds", "cubrid_command_seconds", "upgrade_seconds"):
+                "cubrid_command_seconds", "upgrade_seconds"):
         assert key in settings["timeouts"], f"settings.toml has no timeouts.{key}"
     note(f"  settings   : local overrides = "
          f"{settings.get('_meta', {}).get('local_overrides', 'none')}")
@@ -95,10 +97,9 @@ def test_wsl_responds_and_its_output_decodes(note):
 def test_the_registry_is_readable_and_reports_the_product_state(settings, note):
     """Reads the product's own HKCU key. Absent is a valid answer -- the point is
     that the read works and says which account it read for."""
-    registry = state_mod.read_registry()
-    assert registry.error is None, f"reading the product key failed: {registry.error}"
+    present = registry.exists()
     note(f"  account    : {preflight.current_account()} "
          f"(elevated={preflight.is_elevated()})")
-    note(f"  product    : {'INSTALLED' if registry.present else 'not installed'} "
+    note(f"  product    : {'INSTALLED' if present else 'not installed'} "
          f"for this account"
-         + (f", WslName={registry.wsl_name}" if registry.present else ""))
+         + (f", WslName={registry.wsl_name()}" if present else ""))

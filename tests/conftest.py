@@ -1,27 +1,26 @@
 """Fixtures for the whole suite.
 
-Three kinds of fixture live here:
+Two kinds of fixture live here:
 
 * read-only ones that describe the run -- `settings`, `installer`, `run_dir`;
-* `silent_install`, which INSTALLS the product for the TRA cases. It is
-  destructive, needs an elevated shell, and begins by making the machine clean;
 * `check_product_absent`, an assertion set more than one CATEGORY needs. A
   helper only one category uses belongs in that category's own conftest.
+
+Nothing here installs the product. Every case installs for itself, or through
+its own category's `suite_installation`.
 """
 from __future__ import annotations
 
 import json
 import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 
 from cubridwsl import config as config_mod
-from cubridwsl import constants, preflight, reset, state as state_mod
-from cubridwsl.drivers import silent
+from cubridwsl import constants, preflight
 from cubridwsl.windows import apps, files, registry, tray
 from cubridwsl.wsl import distro
 
@@ -33,7 +32,6 @@ _NOTES: list[str] = []
 # is only quotable if you can say which binary produced it, under which account,
 # in which mode -- and a line printed to a terminal nobody kept is not that.
 _RUN_FACTS: dict[str, Any] = {}
-_INSTALLS: list[dict[str, Any]] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -41,52 +39,37 @@ def pytest_addoption(parser: pytest.Parser) -> None:
                      help="Path to the installer bundle, overriding installer.path.")
 
 
-# The machine states shared across categories, in the order they are
-# established. Only TRA still asks for one: every INS, LCM and OPS case installs
-# for itself or through its own category's `suite_installation`.
-INSTALL_FIXTURE_ORDER = ("silent_install",)
-
-
 # The category and case number in a test function name,
 # e.g. test_ops_002_... -> ("ops", 2).
 _CASE_ID = re.compile(r"test_([a-z]+)_(\d+)_")
 
 
-def _group_key(item: pytest.Item) -> tuple[int, int, str, int]:
-    """(machine state, observation before action, category, case number).
+def _group_key(item: pytest.Item) -> tuple[int, str, int]:
+    """(observation before action, category, case number).
 
-    A case that asks for NO machine-state fixture scores -1 and runs before
-    every case that provisions one. That is where INS, LCM and OPS all sit, and
-    for LCM-001 and LCM-002 it is load-bearing: they REMOVE the product, so
-    running after `silent_install` would take the TRA machine out from under it.
+    The first component runs the cases that only READ a machine before the
+    ones that start, stop, connect or create against it, so OPS and TRA follow
+    INS and LCM.
 
-    The second component runs the cases that only READ a machine before the
-    ones that start, stop, connect or create against it, so OPS follows INS and
-    LCM, and within TRA's machine the observations come first.
+    The second keeps a category's cases together. Categories reuse the same
+    case numbers, so sorting on the number alone would interleave LCM-003 and
+    LCM-004 with INS-003 and INS-004 -- and an INS case uninstalls the product
+    the module-scoped LCM `suite_installation` shares.
 
-    The third keeps a category's cases together. INS, LCM and OPS share the -1
-    slot and reuse the same case numbers, so sorting on the number alone would
-    interleave LCM-003 and LCM-004 with INS-003 and INS-004 -- and an INS case
-    uninstalls the product the module-scoped LCM `suite_installation` shares.
-
-    The fourth runs a category in WORKBOOK ORDER. OPS-004 replaces the engine
+    The third runs a category in WORKBOOK ORDER. OPS-004 replaces the engine
     and must come last on its installation.
 
-    Nothing here keys off a PATH: a case is placed by the machine state it asks
-    for, the markers it carries and its name, so moving a file between folders
-    cannot change when it runs.
+    Nothing here keys off a PATH: a case is placed by the markers it carries
+    and its name, so moving a file between folders cannot change when it runs.
     """
     action = 1 if item.get_closest_marker("action") else 0
-    names = set(getattr(item, "fixturenames", ()))
-    indices = [i for i, fixture in enumerate(INSTALL_FIXTURE_ORDER)
-               if fixture in names]
     match = _CASE_ID.match(item.name)
     category, number = (match.group(1), int(match.group(2))) if match else ("", 0)
-    return (max(indices) if indices else -1, action, category, number)
+    return (action, category, number)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Run the cases in the order their machine states require.
+    """Run the cases in the order their shared installations require.
 
     Collection order is alphabetical by path, which says nothing about what a
     case needs -- see `_group_key`. The sort is stable, so cases that share a
@@ -178,7 +161,7 @@ def run_dir(request) -> Path:
     """Where this run's artefacts go.
 
     Aligned with the --junitxml path run-tests.ps1 passes, so the JUnit XML, the
-    installer logs and the state snapshots land together.
+    installer logs and the `dump_json` artefacts land together.
     """
     xmlpath = getattr(request.config.option, "xmlpath", None)
     # Anchored to the repository, not to the current directory: `pytest` run
@@ -207,12 +190,11 @@ def run_report(run_dir, request) -> dict[str, Any]:
     """Record what this run ran against, before and after it runs.
 
     Written twice on purpose: once at the start, so a session that dies part-way
-    still leaves the facts behind, and once at the end with what the installs
-    actually did.
+    still leaves the facts behind, and once at the end with the facts the run
+    learned on the way -- which bundle, under which account.
     """
     path = run_dir / "run.json"
     _RUN_FACTS.clear()
-    _INSTALLS.clear()
     _RUN_FACTS.update({
         "started": time.strftime("%Y-%m-%d %H:%M:%S"),
         # No run-wide "install mode": each driver pins its own, and every
@@ -226,7 +208,6 @@ def run_report(run_dir, request) -> dict[str, Any]:
     yield _RUN_FACTS
 
     _RUN_FACTS["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    _RUN_FACTS["installs"] = _INSTALLS
     _write_json(path, _RUN_FACTS)
 
 
@@ -248,18 +229,8 @@ def dump_json(run_dir) -> Callable[[str, Any], Path]:
 
 
 # --------------------------------------------------------------------------- #
-# Provisioning
+# Run facts
 # --------------------------------------------------------------------------- #
-@dataclass
-class Installation:
-    """A machine brought to a known state, and how it got there."""
-
-    driver: str
-    options: dict[str, Any]
-    state: state_mod.MachineState
-    result: silent.RunResult | None = None
-
-
 def _record_run_facts(installer: config_mod.InstallerPackage) -> None:
     """Which binary, under which account. A result is only quotable with both.
 
@@ -276,118 +247,6 @@ def _record_run_facts(installer: config_mod.InstallerPackage) -> None:
     _note(f"  account    : {preflight.current_account()} "
           f"(elevated={preflight.is_elevated()}) -- this decides which HKCU "
           f"hive the assertions read")
-
-
-def _provision(driver_name: str, install_fn, settings, installer, run_dir, *,
-               options: dict[str, Any] | None = None) -> Installation:
-    """Clean the machine, install once, and hand the result to a whole group.
-
-    `install_fn(options, log_path) -> result` performs the install itself.
-    """
-    preflight.require_windows()
-    preflight.require_elevation()
-    options = {**constants.INSTALL_OPTIONS, **(options or {})}
-    wsl_name = str(options["CUB_DEFAULT_WSL_NAME"])
-
-    _note(f"== provisioning the machine via the {driver_name} driver ==")
-
-    reset.ensure_clean(settings, installer, run_dir / f"reset-{driver_name}.log",
-                       expected_name=wsl_name, note=_note)
-
-    result = install_fn(options, run_dir / f"install-{driver_name}.log")
-    _note(f"  install    : {result.describe()}")
-    # Recorded before the assertions below, so a FAILED install is in the report
-    # too -- with its exit code and the log paths it wrote.
-    _INSTALLS.append({"driver": driver_name, "options": options,
-                      **result.as_dict()})
-    assert not result.timed_out, (
-        f"the {driver_name} install timed out after {result.duration_seconds:.0f}s. "
-        "The product's own WSL import step runs with no timeout of its own, so "
-        "ours is the only backstop.")
-    assert result.ok, f"the {driver_name} install failed: {result.describe()}"
-
-    # Settling, not sleeping. THREE of the installer's effects land after it has
-    # exited, so a snapshot taken the moment the bundle returns is a snapshot of
-    # a machine that has not finished installing:
-    #
-    #   demodb          ActionCreateDemodb, dispatched asynchronously
-    #   the Tray        ActionLaunchTrayApp, Return="asyncNoWait"
-    #   CUBRID itself   ActionStartCubridService, Return="asyncNoWait", running
-    #                   cubrid_starter.exe -- which nohup's `cubrid service
-    #                   start` and returns as soon as the MASTER is up, without
-    #                   waiting for the broker or the manager
-    #
-    # That last one is why the service components are waited for here. Reading
-    # them once, as the installer exits, reports a startup still in progress as
-    # components that failed to start.
-    #
-    # Only POSITIVE conditions are waited for. Nothing waits for something to
-    # stay absent: "still not there after five minutes" is evidence of patience,
-    # not of correctness.
-    want_demodb = bool(int(options["CREATE_DEMODB"]))
-    want_tray = bool(int(options["START_TRAY_APP"]))
-    wanted_services = constants.SERVICE_COMPONENTS_AWAITED
-
-    def _settled(s: state_mod.MachineState) -> bool:
-        return (s.registry.present and s.cubrid.distro_present
-                and (s.cubrid.demodb_present or not want_demodb)
-                and (s.tray.running or not want_tray)
-                and all(s.cubrid.service_components.get(c) is True
-                        for c in wanted_services))
-
-    try:
-        machine = state_mod.wait_until(
-            _settled, settings, timeout=settings["timeouts"]["settle_seconds"],
-            description=(f"the {driver_name} install to settle (registry key, "
-                         "the distribution"
-                         + (", demodb" if want_demodb else "")
-                         + (", the Tray process" if want_tray else "")
-                         + f", and CUBRID {', '.join(wanted_services)})"))
-    except TimeoutError:
-        # Do NOT fail provisioning here. A component that never came up is a
-        # finding about the PRODUCT, and it belongs in the test that asserts it
-        # -- with the raw `cubrid service status` output beside it -- not in a
-        # fixture error that reads like the framework broke. Everything else
-        # about the machine is still worth asserting.
-        machine = state_mod.snapshot(settings)
-        _note(f"  settle     : timed out; CUBRID reported "
-              f"{machine.cubrid.service_components}. Continuing so the "
-              "assertions can report exactly what is and is not running.")
-
-    # ONE login-shell read, here, after the machine has settled -- never inside
-    # the loop above, which would pay an extra WSL round-trip every few seconds
-    # to answer a question that cannot change while we watch.
-    machine = machine.with_login_environment(
-        state_mod.read_login_environment(settings, machine.registry.wsl_name))
-
-    report = machine.as_dict()
-    (run_dir / f"state-{driver_name}.json").write_text(
-        json.dumps(report, indent=2, default=str), encoding="utf-8")
-    _note(f"  provisioned: distro v{machine.cubrid.distro_version}, "
-          f"cubrid {machine.cubrid.cubrid_version}, "
-          f"tray running={machine.tray.running}, "
-          f"services {machine.cubrid.service_components}")
-
-    return Installation(driver=driver_name, options=options, state=machine,
-                        result=result)
-
-
-@pytest.fixture(scope="session")
-def silent_install(settings, installer, run_dir) -> Installation:
-    """Installed:default, established through the unattended CLI, for TRA.
-
-    /quiet with no option overrides: `constants.INSTALL_OPTIONS` IS the set of
-    shipping defaults, so the bundle is left to choose them.
-
-    DESTRUCTIVE and elevated. It cleans the machine first, which is what makes
-    its own precondition -- a Clean host -- true.
-    """
-    return _provision(
-        "silent",
-        lambda options, log: silent.install(
-            installer, {}, log,
-            timeout=settings["timeouts"]["install_seconds"], mode="quiet"),
-        settings, installer, run_dir)
 
 
 # --------------------------------------------------------------------------- #

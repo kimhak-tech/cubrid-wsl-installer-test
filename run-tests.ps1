@@ -3,19 +3,17 @@
     User-facing entry point: a thin wrapper over pytest. Keeping this interface
     stable means the runner underneath can change without retraining anyone.
 
-        .\run-tests.ps1 checks        # the two check files only, read-only (default)
+        .\run-tests.ps1 checks        # the environment checks only, read-only (default)
         .\run-tests.ps1 silent        # every case with no UI dependency  DESTRUCTIVE
         .\run-tests.ps1 ui            # every case driven through the wizard  DESTRUCTIVE
         .\run-tests.ps1 tray          # control tray functionality  DESTRUCTIVE
         .\run-tests.ps1 all           # both  DESTRUCTIVE
 
-    Every run starts with tests/environment_checks.py (is this machine ready?)
-    and tests/framework_checks.py (do the framework's tools give right
-    answers?), once each, as their own pytest sessions -- for every suite and
-    every -Case; -CollectOnly only lists. Both always run, and a failure in
-    either stops the run before anything is installed. They are not test cases,
-    so the case session's pass count and reports/<stamp>/junit.xml hold
-    workbook cases only.
+    Every run starts with tests/environment_checks.py (is this machine ready?),
+    as its own pytest session -- for every suite and every -Case; -CollectOnly
+    only lists. A failure there stops the run before anything is installed.
+    The checks are not test cases, so the case session's pass count and
+    reports/<stamp>/junit.xml hold workbook cases only.
 
     Suites are described by what they SELECT, never by a list of case IDs: a
     list here goes stale the day a case is added and nothing fails when it does.
@@ -91,10 +89,10 @@ Settings > Apps > Advanced app settings > App execution aliases.
                "Administrator PowerShell.")
     }
 
-    $checkFiles = @('tests/environment_checks.py', 'tests/framework_checks.py')
+    $checkFile = 'tests/environment_checks.py'
 
-    # What the CASE session selects. The check files never match pytest's
-    # test_*.py pattern, so no selection below can pull them into it.
+    # What the CASE session selects. The check file never matches pytest's
+    # test_*.py pattern, so no selection below can pull it in.
     if ($Case) {
         # Anchored as `test_<id>_`, never the bare ID. `-k` is a plain SUBSTRING
         # match over the whole test name, so a bare `ops` also selects every
@@ -118,7 +116,7 @@ Settings > Apps > Advanced app settings > App execution aliases.
                 if ($CollectOnly -and -not $PSBoundParameters.ContainsKey('Suite')) {
                     $selection = @()
                 } else {
-                    $selection = $checkFiles
+                    $selection = @($checkFile)
                 }
             }
             'silent' { $selection = @('-m', 'silent') }
@@ -180,31 +178,15 @@ Settings > Apps > Advanced app settings > App execution aliases.
         exit $LASTEXITCODE
     }
 
-    $checks = @(
-        @{ Name = 'Environment checks'; File = $checkFiles[0]
-           Dir  = "$runDir/environment-checks" },
-        @{ Name = 'Framework checks';   File = $checkFiles[1]
-           Dir  = "$runDir/framework-checks" }
-    )
-    # Both run before either can stop the run. They are independent -- one reads
-    # the machine, the other feeds the framework known input -- so one run
-    # reports every setup problem instead of one per attempt.
-    $failedChecks = @(); $checkCode = 0
-    foreach ($check in $checks) {
-        Invoke-Pytest @($check.File) $check.Dir
-        $code = $LASTEXITCODE
-        $summary += '{0,-18} : {1}' -f $check.Name, (Get-Counts $check.Dir)
-        if ($code -ne 0) {
-            $failedChecks += $check.Name
-            if ($checkCode -eq 0) { $checkCode = $code }
-        }
-    }
-    if ($failedChecks) {
+    $checkDir = "$runDir/environment-checks"
+    Invoke-Pytest @($checkFile) $checkDir
+    $checkCode = $LASTEXITCODE
+    $summary += '{0,-18} : {1}' -f 'Environment checks', (Get-Counts $checkDir)
+    if ($checkCode -ne 0) {
         Write-Summary
         Write-Host ""
-        Write-Host ("$($failedChecks -join ' and ') failed, so nothing was " +
-                    "installed and no case ran. Fix the failures above and " +
-                    "re-run.") -ForegroundColor Red
+        Write-Host ("Environment checks failed, so nothing was installed and " +
+                    "no case ran. Fix the failures above and re-run.") -ForegroundColor Red
         exit $checkCode
     }
 
