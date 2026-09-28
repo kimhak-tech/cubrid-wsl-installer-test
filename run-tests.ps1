@@ -167,6 +167,15 @@ Settings > Apps > Advanced app settings > App execution aliases.
         return "$passed passed, $failed failed, $skipped skipped"
     }
 
+    # reports/<stamp>/report.html, rendered from the files the run left there.
+    # A view of junit.xml, never a result of its own, so a failure to render it
+    # is reported and does not change the run's exit code.
+    function New-HtmlReport([string]$ReportDir) {
+        $out = & $python @($prefix + @('tools/html_report.py', $ReportDir))
+        if ($LASTEXITCODE -eq 0) { return '{0,-18} : {1}' -f 'Report', $out }
+        return '{0,-18} : {1}' -f 'Report', 'not written (see the error above)'
+    }
+
     $summary = @()
     function Write-Summary {
         Write-Host ""
@@ -183,6 +192,7 @@ Settings > Apps > Advanced app settings > App execution aliases.
     $checkCode = $LASTEXITCODE
     $summary += '{0,-18} : {1}' -f 'Environment checks', (Get-Counts $checkDir)
     if ($checkCode -ne 0) {
+        if ($Suite -ne 'checks' -or $Case) { $summary += New-HtmlReport $runDir }
         Write-Summary
         Write-Host ""
         Write-Host ("Environment checks failed, so nothing was installed and " +
@@ -198,6 +208,7 @@ Settings > Apps > Advanced app settings > App execution aliases.
     Invoke-Pytest $selection $runDir
     $code = $LASTEXITCODE
     $summary += '{0,-18} : {1}' -f 'Cases', (Get-Counts $runDir)
+    $summary += New-HtmlReport $runDir
     Write-Summary
 
     # pytest exits 5 when nothing was collected. After a -Case filter that means

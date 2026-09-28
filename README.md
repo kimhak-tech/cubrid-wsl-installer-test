@@ -100,6 +100,8 @@ cubrid-wsl-installer-test/
 │       │                      #     below that do NOT consume it
 │       ├── test_lcm_uninstall.py
 │       └── test_lcm_duplicate_install.py
+├── tools/
+│   └── html_report.py         # reports/<stamp>/report.html from the run's files
 └── reports/                   # Test results (gitignored)
 ```
 
@@ -251,18 +253,44 @@ ever run by path -- and the run ends with separate counts:
 ```text
 Environment checks : 6 passed, 0 failed, 0 skipped
 Cases              : N passed, 0 failed, 0 skipped
+Report             : reports\<timestamp>\report.html
 ```
 
-Only the last line, and `junit.xml`, count workbook cases.
+Only the `Cases` line, `junit.xml` and `report.html` count workbook cases.
 
 Test results are stored under `reports/<timestamp>/`:
 
 | File | Contents |
 |---|---|
+| `report.html` | one page per run: builds, totals, every case with its status and duration, and the reason for each failure or skip |
 | `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
 | `environment-checks/` | the check session's own `junit.xml` and `run.json` |
 | `*.log` | the installer's own logs, plus the MSI's |
+
+### HTML report
+
+Open `report.html` in a browser to read a run at a glance. It shows:
+
+| Section | Contents |
+|---|---|
+| Header | base build and alternative build (filenames), environment, test date |
+| Totals | test duration, total, passed, failed, skipped |
+| Overall Test Case Result | one row per case in run order: category (`INS`, `OPS`, `LCM`, `TRA`), test function name, `PASS` / `FAIL` / `SKIP`, duration |
+| Failures & Skips | only when a case did not pass: the failure or skip message, the full output, and links to that case's installer logs. A failed case's name in the table links here |
+
+A case's duration includes the installs and clean-ups it triggered, so the
+first case to use a category's shared installation looks slower than the rest.
+When the environment checks stop a run, the page says no case ran and lists the
+checks that failed.
+
+The page is rendered from `junit.xml` and `run.json` when the run ends, so it
+cannot disagree with them. A failure to render it is reported but does not
+change the run's exit code. To render it again for any earlier run:
+
+```powershell
+python tools/html_report.py reports/<timestamp>
+```
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require
 > an elevated PowerShell. The UI tests also control the real mouse and keyboard.
