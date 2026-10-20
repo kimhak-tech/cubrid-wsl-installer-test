@@ -104,7 +104,7 @@ cubrid-wsl-installer-test/
 ├── tools/
 │   ├── common.ps1             # Python probe + elevation check, for both scripts
 │   ├── install_build.py       # The install behind install-build.ps1
-│   └── html_report.py         # reports/<stamp>/report.html from the run's files
+│   └── html_report.py         # reports/<run>/report.html from the run's files
 └── reports/                   # Test results (gitignored)
 ```
 
@@ -262,16 +262,28 @@ ever run by path -- and the run ends with separate counts:
 ```text
 Environment checks : 6 passed, 0 failed, 0 skipped
 Cases              : N passed, 0 failed, 0 skipped
-Report             : reports\<timestamp>\report.html
+Report             : reports\<run>\<run>.html
 ```
 
-Only the `Cases` line, `junit.xml` and `report.html` count workbook cases.
+Only the `Cases` line, `junit.xml` and `<run>.html` count workbook cases.
 
-Test results are stored under `reports/<timestamp>/`:
+Each run gets its own directory, `reports/<run>/`, where `<run>` is
+`<stamp>_<scope>`: the start time, then what ran -- the suite name, or the
+workbook ID given to `-Case` -- so a single case and a full run are told apart
+by name alone:
+
+| Command | `<run>` |
+|---|---|
+| `.\run-tests.ps1 all` | `20261020-103524_all` |
+| `.\run-tests.ps1 tray` | `20261020-103524_tray` |
+| `.\run-tests.ps1 -Case OPS` | `20261020-112010_OPS` |
+| `.\run-tests.ps1 -Case INS-004` | `20261020-111502_INS-004` |
+
+It holds:
 
 | File | Contents |
 |---|---|
-| `report.html` | one page per run: builds, totals, every case with its status and duration, and the reason for each failure or skip |
+| `<run>.html` | one page per run, named like its directory so a copy saved elsewhere still says which run: builds, totals, every case with its status and duration, and the reason for each failure or skip |
 | `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
 | `environment-checks/` | the check session's own `junit.xml` and `run.json` |
@@ -279,7 +291,7 @@ Test results are stored under `reports/<timestamp>/`:
 
 ### HTML report
 
-Open `report.html` in a browser to read a run at a glance. It shows:
+Open `<run>.html` in a browser to read a run at a glance. It shows:
 
 | Section | Contents |
 |---|---|
@@ -298,7 +310,7 @@ cannot disagree with them. A failure to render it is reported but does not
 change the run's exit code. To render it again for any earlier run:
 
 ```powershell
-python tools/html_report.py reports/<timestamp>
+python tools/html_report.py reports/<run>
 ```
 
 ### Installing a build without running tests

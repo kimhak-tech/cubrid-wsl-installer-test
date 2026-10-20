@@ -1,8 +1,10 @@
 """Render one run's results as a single HTML page.
 
-    python tools/html_report.py reports/<stamp>
+    python tools/html_report.py reports/<stamp>_<scope>
 
-Writes reports/<stamp>/report.html from the files the run already left there:
+Writes reports/<stamp>_<scope>/<stamp>_<scope>.html -- named after its run
+directory, so a page saved or sent elsewhere still says which run, and whether
+one case or a whole suite -- from the files the run already left there:
 junit.xml for the cases, run.json for the builds and the machine, and
 environment-checks/junit.xml only when no case ran. The page is a VIEW of
 those files, never a second record of the result -- it can be regenerated for
@@ -323,14 +325,15 @@ def render(run_dir: Path) -> Path:
 </main></body>
 </html>
 """
-    out = run_dir / "report.html"
+    out = run_dir / f"{run_dir.name}.html"
     out.write_text(page, encoding="utf-8")
     return out
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: python tools/html_report.py reports/<stamp>", file=sys.stderr)
+        print("usage: python tools/html_report.py reports/<stamp>_<scope>",
+              file=sys.stderr)
         return 2
     run_dir = Path(argv[1])
     if not run_dir.is_dir():
