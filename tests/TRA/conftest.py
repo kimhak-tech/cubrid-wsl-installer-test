@@ -47,7 +47,8 @@ def check_started_from_tray(suite_installation, settings) -> Callable[[str], Non
         status = cubrid.wait_for_status(
             wsl_name, lambda s: s.all_running(AWAITED), settings)
         assert status.all_running(AWAITED), (
-            f"CUBRID is not running {when}:\n{status.raw}")
+            f"CUBRID should be running {when}, but status reports:\n"
+            f"{status.raw}")
 
         shown = tray.wait_for_icon_status(RUNNING)
         assert shown == {RUNNING}, (
@@ -55,9 +56,9 @@ def check_started_from_tray(suite_installation, settings) -> Callable[[str], Non
             f"showed {sorted(shown)}")
 
         assert not tray.menu_item_enabled("CUBRID Start"), (
-            f"CUBRID Start is still available {when}")
+            f"CUBRID Start should be disabled {when}, but it is enabled")
         assert tray.menu_item_enabled("CUBRID Stop"), (
-            f"CUBRID Stop is not available {when}")
+            f"CUBRID Stop should be enabled {when}, but it is disabled")
 
     return _check
 
@@ -72,7 +73,8 @@ def check_stopped_from_tray(suite_installation, settings) -> Callable[[str], Non
         status = cubrid.wait_for_status(
             wsl_name, lambda s: not s.any_running(AWAITED), settings)
         assert not status.any_running(AWAITED), (
-            f"CUBRID is still running {when}:\n{status.raw}")
+            f"CUBRID should be stopped {when}, but status reports:\n"
+            f"{status.raw}")
 
         shown = tray.wait_for_icon_status(STOPPED)
         assert shown == {STOPPED}, (
@@ -80,8 +82,8 @@ def check_stopped_from_tray(suite_installation, settings) -> Callable[[str], Non
             f"showed {sorted(shown)}")
 
         assert not tray.menu_item_enabled("CUBRID Stop"), (
-            f"CUBRID Stop is still available {when}")
+            f"CUBRID Stop should be disabled {when}, but it is enabled")
         assert tray.menu_item_enabled("CUBRID Start"), (
-            f"CUBRID Start is not available {when}")
+            f"CUBRID Start should be enabled {when}, but it is disabled")
 
     return _check

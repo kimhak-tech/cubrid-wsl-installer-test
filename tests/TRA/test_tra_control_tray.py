@@ -90,18 +90,22 @@ def test_tra_001_every_menu_option_performs_its_function(
         note(f"  TRA-001-about      : {about.text!r}")
         # CUBRID was stopped in step 4, and About reads the status live.
         assert "Server Status: Stopped" in about.text, (
-            f"About does not report the stopped service:\n{about.text}")
+            "About should report 'Server Status: Stopped', but it reads:\n"
+            f"{about.text}")
         assert installer.cubrid_version in about.text, (
-            f"About does not show CUBRID {installer.cubrid_version}:\n{about.text}")
+            f"About should show CUBRID {installer.cubrid_version}, but it "
+            f"reads:\n{about.text}")
         assert (f"Version: v{installer.installer_version}-{installer.build}"
                 in about.text), (
-            f"About does not show installer version "
-            f"v{installer.installer_version}-{installer.build}:\n{about.text}")
+            f"About should show installer version "
+            f"v{installer.installer_version}-{installer.build}, but it "
+            f"reads:\n{about.text}")
         assert f"WSL Name: {wsl_name}" in about.text, (
-            f"About does not show WSL name {wsl_name!r}:\n{about.text}")
+            f"About should show WSL name {wsl_name!r}, but it reads:\n"
+            f"{about.text}")
         assert str(registry.install_dir()) in about.text, (
-            f"About does not show the install directory "
-            f"{registry.install_dir()}:\n{about.text}")
+            f"About should show the install directory "
+            f"{registry.install_dir()}, but it reads:\n{about.text}")
     finally:
         tray.close_dialog(about.window)
 
@@ -110,7 +114,9 @@ def test_tra_001_every_menu_option_performs_its_function(
     # ----------------------------------------------------------------- #
     viewer = tray.open_guide()
     note(f"  TRA-001-guide      : opened in window {viewer}")
-    assert viewer, "Guide did not open the installed guide in a browser"
+    assert viewer, (
+        "Guide should open the installed guide in a browser, but no browser "
+        "window showed it")
     note(f"  TRA-001-guide-tab  : closed={tray.close_viewer_tab(viewer)}")
 
     # ----------------------------------------------------------------- #
@@ -122,9 +128,10 @@ def test_tra_001_every_menu_option_performs_its_function(
     hwnd = tray.window()
     tray.select("Exit")
     assert tray.wait_until_exited(), (
-        "the Tray process is still running after Exit")
+        "the Tray process should exit after Exit, but it is still running")
     assert not tray.is_icon_shown(hwnd), (
-        "the Tray's icon is still in the notification area after Exit")
+        "the Tray's icon should leave the notification area after Exit, but "
+        "it is still there")
 
 
 # =============================================================================
@@ -165,7 +172,8 @@ def test_tra_002_tray_follows_cli_service_changes(
     # 4. Verification -- the service stopped, and the icon followed
     # ----------------------------------------------------------------- #
     assert cubrid.is_service_stopped(wsl_name, settings), (
-        "CUBRID is still running after `cubrid service stop`:\n"
+        "CUBRID should be stopped after `cubrid service stop`, but status "
+        "reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}")
 
     shown = tray.wait_for_icon_status(STOPPED)
@@ -183,7 +191,8 @@ def test_tra_002_tray_follows_cli_service_changes(
     # 6. Verification -- the service runs, and the icon followed
     # ----------------------------------------------------------------- #
     assert cubrid.is_service_started(wsl_name, settings), (
-        "CUBRID is not running after `cubrid service start`:\n"
+        "CUBRID should be running after `cubrid service start`, but status "
+        "reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}")
 
     shown = tray.wait_for_icon_status(RUNNING)
@@ -219,7 +228,8 @@ def test_tra_003_desktop_shortcut_launches_the_tray(suite_installation, note):
     # This is also what proves the shortcut's target: only the installed Tray
     # creates a CUBRIDTrayApp window, and a missing shortcut refuses to open.
     assert tray.wait_for_icon(), (
-        "the Tray's icon did not appear after opening its shortcut "
+        "the Tray's icon should appear after opening its shortcut, but it did "
+        "not "
         f"(process running: {tray.is_running()})")
 
     menu = tray.menu_items()

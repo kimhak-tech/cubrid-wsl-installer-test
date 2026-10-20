@@ -63,7 +63,8 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     reached = [step.name for step in result.steps]
     missing = [page for page in wizard_pages if page not in reached]
     assert not missing, (
-        f"the wizard never reached {missing}; pages reached: {reached}")
+        f"the wizard should reach every page, but it never reached {missing}; "
+        f"pages reached: {reached}")
 
     # ----------------------------------------------------------------- #
     # 3. Verification -- the post-install state

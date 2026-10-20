@@ -106,12 +106,12 @@ def test_ins_006_the_installer_refuses_an_invalid_wsl_name(
     # A name check runs before anything is written, so a timeout is not a slow
     # refusal but no refusal at all.
     assert not result.timed_out, (
-        f"the install timed out after {result.duration_seconds:.0f}s instead "
-        "of refusing the name")
+        f"the bundle should refuse {rejected_name!r} at once, but the install "
+        f"timed out after {result.duration_seconds:.0f}s")
 
     # No specific exit code: the product commits to failing, not to a number.
     assert not result.ok, (
-        f"the bundle reported SUCCESS ({result.describe()}) for the WSL name "
-        f"{rejected_name!r}, which CheckWslName rejects")
+        f"the bundle should refuse the WSL name {rejected_name!r}, which "
+        f"CheckWslName rejects, but it reported SUCCESS ({result.describe()})")
 
     check_product_absent(default_name, after="the refusal")

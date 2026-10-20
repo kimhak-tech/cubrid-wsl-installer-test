@@ -98,7 +98,8 @@ def test_lcm_003_a_different_bundle_is_blocked(suite_installation,
     # 2. And the page says WHY. The header alone does not tell the user that a
     # version is already installed, nor that they must uninstall it first.
     assert message, (
-        f"the failure page carried no text containing {already_installed_message}")
+        f"the failure page should mention {already_installed_message}, but no "
+        "text on it does")
 
     # The existing installation is UNTOUCHED.
     assert registry.values() == installed_registry, (
@@ -112,15 +113,18 @@ def test_lcm_003_a_different_bundle_is_blocked(suite_installation,
         f"      after : {apps.read().describe()}")
 
     assert distro.exists(wsl_name), (
-        f"the WSL distribution {wsl_name!r} is gone after a refused install")
+        f"the WSL distribution {wsl_name!r} should survive a refused install, "
+        "but it is gone")
 
-    assert tray.is_running(), "the Tray is no longer running after a refused install"
+    assert tray.is_running(), (
+        "the Tray should still be running after a refused install, but it is not")
 
     # The one thing none of the above can answer: the machine can match field
     # for field while the product inside the distribution has stopped working.
     assert cubrid.is_ready(wsl_name, settings), (
-        "CUBRID is not running inside the distribution after the refused "
-        f"install. Status: {cubrid.service_status(wsl_name, settings)}")
+        "CUBRID should still be running, with demodb, after a refused install, "
+        f"but status reports:\n{cubrid.service_status(wsl_name, settings).raw}\n"
+        f"databases: {list(cubrid.databases(wsl_name, settings))}")
 
 
 # =============================================================================
@@ -177,14 +181,14 @@ def test_lcm_004_a_different_bundle_is_rejected_silently(suite_installation,
     # success. The claim here runs the other way -- a bundle that refused to
     # install cannot also be reporting that it installed.
     assert not result.ok, (
-        f"Bundle B reported SUCCESS ({result.describe()}) for an install over a "
-        "product that is already there")
+        "Bundle B should refuse to install over a product that is already "
+        f"there, but it reported SUCCESS ({result.describe()})")
 
     # Read AFTER the run: a /quiet bundle should never have drawn a window at any
     # point. `wizard` is safe to import here -- this reader is ctypes only.
     windows_open = wizard.setup_windows_open(constants.ui_strings("bundle_title"))
     assert not windows_open, (
-        "an unattended run put a setup window on screen: "
+        "an unattended run should show no setup window, but it opened: "
         f"{[title for _handle, title in windows_open]}")
 
     # The existing installation is UNTOUCHED.
@@ -199,10 +203,13 @@ def test_lcm_004_a_different_bundle_is_rejected_silently(suite_installation,
         f"      after : {apps.read().describe()}")
 
     assert distro.exists(wsl_name), (
-        f"the WSL distribution {wsl_name!r} is gone after a refused install")
+        f"the WSL distribution {wsl_name!r} should survive a refused install, "
+        "but it is gone")
 
-    assert tray.is_running(), "the Tray is no longer running after a refused install"
+    assert tray.is_running(), (
+        "the Tray should still be running after a refused install, but it is not")
 
     assert cubrid.is_ready(wsl_name, settings), (
-        "CUBRID is not running inside the distribution after the refused "
-        f"install. Status: {cubrid.service_status(wsl_name, settings)}")
+        "CUBRID should still be running, with demodb, after a refused install, "
+        f"but status reports:\n{cubrid.service_status(wsl_name, settings).raw}\n"
+        f"databases: {list(cubrid.databases(wsl_name, settings))}")
