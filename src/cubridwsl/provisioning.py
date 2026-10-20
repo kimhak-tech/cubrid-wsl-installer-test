@@ -1,7 +1,8 @@
 """One installation, shared by a group of cases and removed when they finish.
 
 For a group of cases that needs nothing more than a working installation to act
-against, and that wants it gone again afterwards.
+against, and that wants it gone again afterwards. The install itself is
+`install_fresh`, which `tools/install_build.py` uses too.
 
 It is a generator rather than a fixture because the SCOPE is what differs
 between groups, and a fixture's scope is fixed by its decorator. Each category's
@@ -64,23 +65,37 @@ def provide_installation(installer: config_mod.InstallerPackage,
     returns without running the bundle when nothing is registered. It is also
     the only recovery from a run that was killed before its teardown could run.
     """
+    note(f"== provisioning one installation for the {label} cases ==")
+    yield install_fresh(installer, settings, run_dir, note, f"{label}-shared")
+
+    silent.uninstall_cubrid_wsl(installer, settings,
+                                run_dir / f"{label}-shared-after.log", note=note)
+
+
+def install_fresh(installer: config_mod.InstallerPackage,
+                  settings: dict[str, Any], run_dir: Path, note: Note,
+                  log_prefix: str) -> InstalledProduct:
+    """Remove whatever is installed, install `installer` unattended, and
+    confirm it landed.
+
+    The one install path behind both `provide_installation` and
+    `tools/install_build.py`, so the two cannot disagree about "installed".
+    `log_prefix` names its two logs, `<prefix>-before.log` (the uninstall) and
+    `<prefix>-install.log`.
+    """
     preflight.require_windows()
     preflight.require_elevation()
 
-    note(f"== provisioning one installation for the {label} cases ==")
     silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / f"{label}-shared-before.log", note=note)
+                                run_dir / f"{log_prefix}-before.log", note=note)
     silent.install_cubrid_wsl(installer, settings,
-                              run_dir / f"{label}-shared-install.log", note=note)
+                              run_dir / f"{log_prefix}-install.log", note=note)
 
     # Assert the MACHINE, never the bundle's exit code -- `install_cubrid_wsl`
     # reports a failed install rather than raising, so nothing above this line
     # has established that anything was installed at all.
     assert registry.exists(), (
-        f"CUBRID for WSL is not installed after the {label} set-up step -- see "
-        f"{label}-shared-install.log")
+        f"CUBRID for WSL is not installed after the install step -- see "
+        f"{log_prefix}-install.log")
 
-    yield InstalledProduct(package=installer, wsl_name=registry.wsl_name())
-
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / f"{label}-shared-after.log", note=note)
+    return InstalledProduct(package=installer, wsl_name=registry.wsl_name())

@@ -45,39 +45,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Push-Location $root
 try {
-    # Probe for a working interpreter rather than pattern-matching its path:
-    # the Microsoft Store STUB and the Python Install Manager's real launcher
-    # both live under WindowsApps, so the path tells you nothing.
-    $python = $null; $prefix = @()
-    foreach ($cand in @(
-        @{ Exe = 'python'; Pre = @() },
-        @{ Exe = 'py';     Pre = @('-3') }
-    )) {
-        $cmd = Get-Command $cand.Exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        $probe = & $cmd.Source @($cand.Pre + @('-c', 'import sys; print(sys.executable)')) 2>$null
-        if ($LASTEXITCODE -eq 0 -and $probe) {
-            $python = $cmd.Source; $prefix = $cand.Pre
-            Write-Host "python: $($probe.Trim())" -ForegroundColor DarkGray
-            break
-        }
-    }
-    if (-not $python) {
-        throw @"
-No working Python found.
+    . "$root\tools\common.ps1"
+    $found = Find-Python
+    $python = $found.Exe; $prefix = $found.Prefix
 
-    winget install 9NQ7512CXL7T -e --accept-package-agreements
-    py install 3.12
-
-Accept the prompt to add %LocalAppData%\Python\bin to PATH, then open a new
-shell. If 'python' still fails, turn off the Store aliases under
-Settings > Apps > Advanced app settings > App execution aliases.
-"@
-    }
-
-    $isAdmin = ([Security.Principal.WindowsPrincipal] `
-        [Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $isAdmin = Test-IsAdmin
 
     # Everything except 'checks' installs the product, and the MSI carries a
     # Privileged launch condition. Fail here with one clear line rather than
@@ -148,7 +120,12 @@ Settings > Apps > Advanced app settings > App execution aliases.
                            [string[]]$Extra = @()) {
         # Not named $args: that is a PowerShell automatic variable.
         $pytestArgs = @('-m', 'pytest') + $Selection + $Extra
-        if ($Installer) { $pytestArgs += @('--installer', $Installer) }
+        # ONE token, --installer=<path>. Two tokens fail whenever the selection
+        # names no path (-Case, -m): pytest parses the command line BEFORE it
+        # loads tests/conftest.py, which defines the option, so it takes the
+        # path for a file_or_dir argument, roots the run at the installer's
+        # folder, never loads that conftest, and rejects --installer.
+        if ($Installer) { $pytestArgs += "--installer=$Installer" }
         $pytestArgs += @('--junitxml', "$ReportDir/junit.xml",
                          '--basetemp', "$ReportDir/tmp", '-v')
         New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null

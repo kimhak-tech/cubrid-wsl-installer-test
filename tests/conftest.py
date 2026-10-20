@@ -238,12 +238,7 @@ def _record_run_facts(installer: config_mod.InstallerPackage) -> None:
     that runs the installer -- whatever category -- lands in run.json.
     """
     _note(f"  installer  : {installer.describe()}")
-    _RUN_FACTS["installer"] = {
-        "path": str(installer.path), "sha256": installer.sha256,
-        "cubrid_version": installer.cubrid_version,
-        "installer_version": installer.installer_version,
-        "build": installer.build,
-    }
+    _RUN_FACTS["installer"] = installer.as_dict()
     _note(f"  account    : {preflight.current_account()} "
           f"(elevated={preflight.is_elevated()}) -- this decides which HKCU "
           f"hive the assertions read")
