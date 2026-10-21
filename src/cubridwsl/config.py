@@ -110,6 +110,13 @@ class InstallerPackage:
             self._sha256 = digest.hexdigest()
         return self._sha256
 
+    def as_dict(self) -> dict[str, Any]:
+        """Which build, for a run's JSON record: run.json and install.json."""
+        return {"path": str(self.path), "size": self.size,
+                "sha256": self.sha256, "cubrid_version": self.cubrid_version,
+                "installer_version": self.installer_version,
+                "build": self.build}
+
     def describe(self) -> str:
         # The version clause is dropped rather than printed empty for a bundle
         # whose name did not parse -- "CUBRID  installer  build" reads like

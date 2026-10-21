@@ -54,6 +54,7 @@ driver never asserts.
 ```text
 cubrid-wsl-installer-test/
 ├── run-tests.ps1              # Test entry point
+├── install-build.ps1          # Install one build; runs no test case
 ├── pyproject.toml             # Dependencies and pytest configuration
 ├── config/
 │   ├── settings.toml          # Framework defaults
@@ -101,6 +102,8 @@ cubrid-wsl-installer-test/
 │       ├── test_lcm_uninstall.py
 │       └── test_lcm_duplicate_install.py
 ├── tools/
+│   ├── common.ps1             # Python probe + elevation check, for both scripts
+│   ├── install_build.py       # The install behind install-build.ps1
 │   └── html_report.py         # reports/<stamp>/report.html from the run's files
 └── reports/                   # Test results (gitignored)
 ```
@@ -291,6 +294,28 @@ change the run's exit code. To render it again for any earlier run:
 ```powershell
 python tools/html_report.py reports/<timestamp>
 ```
+
+### Installing a build without running tests
+
+To put a build on the machine for manual testing or debugging, without running
+any case:
+
+```powershell
+.\install-build.ps1 -Installer <path\to\bundle.exe>
+```
+
+`-Installer` is required; without it the script stops before doing anything.
+
+It runs the environment checks, uninstalls whatever is installed, installs the
+build silently with default options, and waits until CUBRID, the Tray and
+demodb are up. The build is **left installed**. It is not a test run: nothing
+is counted or judged. Needs an elevated PowerShell.
+
+If something did not come up within five minutes, `notes.txt` says "did NOT
+fully settle" -- check it before using the machine.
+
+Results go to `reports/<timestamp>-install/`: `install.json` (which build,
+SHA-256, account, result), `notes.txt`, and the installer logs.
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require
 > an elevated PowerShell. The UI tests also control the real mouse and keyboard.
