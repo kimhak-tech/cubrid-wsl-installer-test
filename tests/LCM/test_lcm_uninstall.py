@@ -72,11 +72,6 @@ def test_lcm_001_uninstall_through_apps_and_features(installer, settings,
     check_product_absent(wsl_name, after="the Apps & Features uninstall",
                          tray_binary=tray_binary)
 
-    # ----------------------------------------------------------------- #
-    # 5. Clean up -- remove anything the uninstall under test did not
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "04-cleanup.log", note=note)
-
 
 # =============================================================================
 # LCM-002: Uninstall by re-running the same installer bundle
@@ -133,8 +128,3 @@ def test_lcm_002_uninstall_by_rerunning_the_same_bundle(installer, settings,
 
     check_product_absent(wsl_name, after="the maintenance-page uninstall",
                          tray_binary=tray_binary)
-
-    # ----------------------------------------------------------------- #
-    # 5. Clean up -- remove anything the uninstall under test did not
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "04-cleanup.log", note=note)

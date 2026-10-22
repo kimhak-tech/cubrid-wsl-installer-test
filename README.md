@@ -77,8 +77,8 @@ cubrid-wsl-installer-test/
 │   │                          #     control, csql, createdb, engine install
 │   ├── constants.py           # All product values: registry paths, install
 │   │                          #   options, tray identifiers, wizard UI strings
-│   ├── provisioning.py        # One installation shared by a category's cases
-│   │                          #   and removed when they finish; a category's
+│   ├── provisioning.py        # One installation shared by a category's cases,
+│   │                          #   left installed after them; a category's
 │   │                          #   conftest picks the scope
 │   ├── preflight.py           # Session preconditions: Windows, elevation, account
 │   └── config.py              # Configuration loading
@@ -119,7 +119,7 @@ A case gets its machine in one of two ways, decided by what it does to it:
   how it is installed, or how it is removed.
 - **A `suite_installation` in the category's conftest**, when a group of cases
   only needs a working installation to act against. It is built on
-  `provisioning.py` and removed after the group.
+  `provisioning.py` and installs once for the group.
 
 Sharing is only sound for cases that do not CONSUME the installation.
 
@@ -234,6 +234,12 @@ the current inventory:
 What each case asserts is in its own file's docstring, under `Verifies:`.
 
 Other options: `-Installer <path>` for a one-off build.
+
+**The machine is left installed after a run**, so a failure can be examined on
+the machine that produced it. Nothing is uninstalled at the end: every case and
+every shared installation starts by uninstalling whatever is there, so a
+left-over installation never reaches the next run. To remove it by hand, use
+Apps & Features.
 
 The bundle's UI mode is **not** a runner option. Each driver pins its own, and
 the choice is not cosmetic: `/passive` runs the installer's environment checks
@@ -401,7 +407,7 @@ def test_ops_005_something(suite_installation, settings, note):
 |---|---|
 | A case | a file under the category's folder (`tests/INS/`, `tests/OPS/`, `tests/TRA/`, `tests/LCM/`), with its markers declared in the test module — `pytestmark` in a conftest is silently ignored |
 | A new install-option combination | the changed options only, as a dict inside the case, passed to the install driver |
-| A group of cases that only needs a working installation to act against | a `suite_installation` fixture in the category's conftest, delegating to `provisioning.provide_installation` — module scope, so it lasts exactly as long as the one file that uses it. It installs before the first case and uninstalls after the last |
+| A group of cases that only needs a working installation to act against | a `suite_installation` fixture in the category's conftest, delegating to `provisioning.provide_installation` — module scope, so it lasts exactly as long as the one file that uses it. It installs before the first case and is left on the machine after the last |
 | A case that REMOVES the product | the test body itself, set up with `silent.install_cubrid_wsl` — and **no machine-state fixture**, which is what keeps it ahead of every case that provisions one |
 | A case that runs a SECOND bundle over an installation | the test body, reading the values it claims are unchanged before the action and comparing them after |
 | A second bundle to test against | `installer.alternate_path` in `settings.local.toml` — any build other than the one under test. It must differ: the BundleId is regenerated on every build, so a rebuild from identical source is a different bundle, while the SAME file gets the maintenance page instead |

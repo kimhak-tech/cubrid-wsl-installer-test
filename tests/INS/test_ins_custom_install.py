@@ -85,12 +85,6 @@ def test_ins_003_install_with_every_option_changed_via_the_wizard(
         f"the install went to {install_dir} as chosen, but {derived_dir} -- "
         "the directory derived from the WSL name -- was created too")
 
-    # ----------------------------------------------------------------- #
-    # 4. Clean up -- remove the installation
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / "ins-003-after.log", note=note)
-
 
 # =============================================================================
 # INS-004: Disable WSL2 mode explicitly
@@ -130,9 +124,3 @@ def test_ins_004_install_in_wsl1_mode_via_the_silent_cli(
     # 3. Verification -- the post-install state, at WSL 1
     # ----------------------------------------------------------------- #
     check_post_install({**constants.INSTALL_OPTIONS, **changed})
-
-    # ----------------------------------------------------------------- #
-    # 4. Clean up -- remove the installation
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / "ins-004-after.log", note=note)

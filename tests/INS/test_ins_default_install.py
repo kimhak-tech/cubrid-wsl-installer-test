@@ -70,12 +70,6 @@ def test_ins_001_full_default_installation_via_the_gui_wizard(
     # ----------------------------------------------------------------- #
     check_post_install(dict(constants.INSTALL_OPTIONS))
 
-    # ----------------------------------------------------------------- #
-    # 4. Clean up -- remove the installation
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / "ins-001-after.log", note=note)
-
 
 # =============================================================================
 # INS-002: Full default installation via the silent CLI
@@ -110,9 +104,3 @@ def test_ins_002_full_default_installation_via_the_silent_cli(
     # 3. Verification -- the post-install state
     # ----------------------------------------------------------------- #
     check_post_install(dict(constants.INSTALL_OPTIONS))
-
-    # ----------------------------------------------------------------- #
-    # 4. Clean up -- remove the installation
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / "ins-002-after.log", note=note)

@@ -122,9 +122,6 @@ def test_lcm_003_a_different_bundle_is_blocked(suite_installation,
         "CUBRID is not running inside the distribution after the refused "
         f"install. Status: {cubrid.service_status(wsl_name, settings)}")
 
-    # No clean-up here: `suite_installation` owns this machine and removes it
-    # after the last case in this module.
-
 
 # =============================================================================
 # LCM-004: A different bundle run unattended over an existing installation
@@ -209,6 +206,3 @@ def test_lcm_004_a_different_bundle_is_rejected_silently(suite_installation,
     assert cubrid.is_ready(wsl_name, settings), (
         "CUBRID is not running inside the distribution after the refused "
         f"install. Status: {cubrid.service_status(wsl_name, settings)}")
-
-    # No clean-up here: `suite_installation` owns this machine and removes it
-    # after the last case in this module.

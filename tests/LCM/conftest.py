@@ -13,15 +13,14 @@ def suite_installation(installer, settings, run_dir,
                        note) -> Iterator[InstalledProduct]:
     """One installation for every case in this module.
 
-        uninstall  ->  install  ->  LCM-003  ->  LCM-004  ->  uninstall
+        uninstall  ->  install  ->  LCM-003  ->  LCM-004
 
     Neither case consumes it -- each asserts the installation is untouched by
     the bundle it refuses -- which is what makes it shareable. LCM-001 and
     LCM-002 deliberately do not use this: removing the product is their
     subject, so each installs for itself.
 
-    Module scope because this module IS the group, so the installation and the
-    suite have one lifetime and the teardown lands after the last case rather
-    than at the end of the run.
+    Module scope because this module IS the group, so it installs once for
+    both cases.
     """
     yield from provide_installation(installer, settings, run_dir, note, "lcm")
