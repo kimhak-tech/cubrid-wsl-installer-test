@@ -20,15 +20,14 @@ def suite_installation(installer, settings, run_dir,
                        note) -> Iterator[InstalledProduct]:
     """One installation for every case in test_tra_control_tray.py.
 
-        uninstall  ->  install  ->  TRA-001 .. TRA-004  ->  uninstall
+        uninstall  ->  install  ->  TRA-001 .. TRA-004
 
     The cases share it, so each one BEGINS by putting the Tray and CUBRID into
     the state it needs -- TRA-001 ends by exiting the Tray, TRA-003 needs it
     closed -- rather than trusting the case before it to have left them there.
 
-    The closing uninstall also stops the Tray, so nothing here has to: a Tray
-    this run launched would otherwise hold the runner's console handles open
-    and keep an elevated wrapper from returning.
+    The Tray is left running with the installation. `tray.launch` starts it
+    detached, so it holds none of the runner's console handles.
     """
     yield from provide_installation(installer, settings, run_dir, note, "tra")
 

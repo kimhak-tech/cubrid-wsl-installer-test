@@ -1,13 +1,15 @@
-"""One installation, shared by a group of cases and removed when they finish.
+"""One installation, shared by a group of cases and left on the machine after.
 
 For a group of cases that needs nothing more than a working installation to act
-against, and that wants it gone again afterwards. The install itself is
-`install_fresh`, which `tools/install_build.py` uses too.
+against. The installation is NOT removed when the group finishes, so a failure
+can be examined on the machine that produced it; the next group's opening
+uninstall replaces it. The install itself is `install_fresh`, which
+`tools/install_build.py` uses too.
 
 It is a generator rather than a fixture because the SCOPE is what differs
 between groups, and a fixture's scope is fixed by its decorator. Each category's
 conftest declares its own fixture at the width its cases need and delegates the
-body here with `yield from`, which passes on both the value and the resumption:
+body here with `yield from`, which passes on the value:
 
     # tests/<CATEGORY>/conftest.py
     @pytest.fixture(scope="module")        # or "package", for a group of files
@@ -55,21 +57,19 @@ class InstalledProduct:
 def provide_installation(installer: config_mod.InstallerPackage,
                          settings: dict[str, Any], run_dir: Path, note: Note,
                          label: str) -> Iterator[InstalledProduct]:
-    """Install, hand the installation to a group of cases, then remove it.
+    """Install, and hand the installation to a group of cases. Never removes it.
 
-    `label` names the group in the run notes and prefixes its three logs, so
-    two groups provisioning in one session do not overwrite each other's.
+    `label` names the group in the run notes and prefixes its two logs, so two
+    groups provisioning in one session do not overwrite each other's.
 
-    The opening uninstall makes the install's precondition true rather than
-    assumed, and costs nothing when it is already true -- `uninstall_cubrid_wsl`
-    returns without running the bundle when nothing is registered. It is also
-    the only recovery from a run that was killed before its teardown could run.
+    The opening uninstall in `install_fresh` makes the install's precondition
+    true rather than assumed, and costs nothing when it is already true --
+    `uninstall_cubrid_wsl` returns without running the bundle when nothing is
+    registered. It is also what removes the installation an earlier group or
+    run left behind.
     """
     note(f"== provisioning one installation for the {label} cases ==")
     yield install_fresh(installer, settings, run_dir, note, f"{label}-shared")
-
-    silent.uninstall_cubrid_wsl(installer, settings,
-                                run_dir / f"{label}-shared-after.log", note=note)
 
 
 def install_fresh(installer: config_mod.InstallerPackage,

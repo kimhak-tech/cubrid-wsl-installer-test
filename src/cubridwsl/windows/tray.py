@@ -316,7 +316,14 @@ def launch(*, timeout: float = 30) -> None:
     executable = binary_path()
     if not executable or not executable.is_file():
         raise TrayError(f"the Tray executable is missing: {executable}")
-    subprocess.Popen([str(executable)], cwd=str(executable.parent))
+    # Detached and with no std handles: a run leaves the Tray running, and one
+    # holding the runner's console handles keeps an elevated wrapper from
+    # returning.
+    subprocess.Popen([str(executable)], cwd=str(executable.parent),
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL,
+                     creationflags=(subprocess.DETACHED_PROCESS
+                                    | subprocess.CREATE_NEW_PROCESS_GROUP))
     if not wait_for_icon(timeout=timeout):
         raise TrayError(f"the CUBRID Tray did not show its icon within {timeout:.0f}s")
 

@@ -26,10 +26,10 @@ import pytest
 from cubridwsl import constants
 from cubridwsl.wsl import cubrid
 
-# `destructive` because `suite_installation` installs and uninstalls the
-# product around these cases; `action` plus the case number keeps them together
+# `destructive` because `suite_installation` uninstalls and installs the
+# product before these cases; `action` plus the case number keeps them together
 # and in workbook order. OPS-004 replaces the engine and no downgrade exists,
-# which is why it runs last and why the installation is removed after it.
+# which is why it runs last.
 pytestmark = [pytest.mark.silent, pytest.mark.destructive, pytest.mark.action]
 
 
@@ -369,6 +369,3 @@ def test_ops_004_install_a_new_cubrid_version_over_the_default(
         "home:\n"
         f"{cubrid.engine_locations(wsl_name, settings)}")
 
-
-# No clean-up here: `suite_installation` owns this machine and removes it
-# after the last case in this module.

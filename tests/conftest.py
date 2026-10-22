@@ -7,7 +7,8 @@ Two kinds of fixture live here:
   helper only one category uses belongs in that category's own conftest.
 
 Nothing here installs the product. Every case installs for itself, or through
-its own category's `suite_installation`.
+its own category's `suite_installation`, and nothing removes it at the end: the
+machine is left as the last case left it.
 """
 from __future__ import annotations
 
