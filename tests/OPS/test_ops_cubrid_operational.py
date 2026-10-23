@@ -61,16 +61,18 @@ def test_ops_001_service_stop_then_start(suite_installation, settings, note):
     # ----------------------------------------------------------------- #
     # Read from `cubrid service status`, never from the stop's exit code.
     assert cubrid.is_service_stopped(wsl_name, settings), (
-        "the CUBRID master still reports running after "
-        "`cubrid service stop`:\n"
+        "the CUBRID master should be stopped after `cubrid service stop`, "
+        "but status reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}")
 
     assert cubrid.is_broker_stopped(wsl_name, settings), (
-        "the broker still reports running after `cubrid service stop`:\n"
+        "the broker should be stopped after `cubrid service stop`, but status "
+        "reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}")
 
     assert cubrid.is_manager_stopped(wsl_name, settings), (
-        "the manager still reports running after `cubrid service stop`:\n"
+        "the manager should be stopped after `cubrid service stop`, but "
+        "status reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}")
 
     # ----------------------------------------------------------------- #
@@ -86,18 +88,20 @@ def test_ops_001_service_stop_then_start(suite_installation, settings, note):
     # a process PRESENT while status disagrees is a status problem, one ABSENT
     # started and died.
     assert cubrid.is_service_started(wsl_name, settings), (
-        "the CUBRID master is not running after `cubrid service start`:\n"
+        "the CUBRID master should be running after `cubrid service start`, "
+        "but status reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}\n"
         f"processes:\n{cubrid.processes(wsl_name, settings)}")
 
     assert cubrid.is_broker_started(wsl_name, settings), (
-        "the broker is not running with its default brokers after "
-        "`cubrid service start`:\n"
+        "the broker should be running with its default brokers after "
+        "`cubrid service start`, but status reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}\n"
         f"processes:\n{cubrid.processes(wsl_name, settings)}")
 
     assert cubrid.is_manager_started(wsl_name, settings), (
-        "the manager is not running after `cubrid service start`:\n"
+        "the manager should be running after `cubrid service start`, but "
+        "status reports:\n"
         f"{cubrid.service_status(wsl_name, settings).raw}\n"
         f"processes:\n{cubrid.processes(wsl_name, settings)}")
 
@@ -148,7 +152,8 @@ def test_ops_002_demodb_sql_smoke_test_connect_select_then_ddl_dml(
     note(f"  OPS-002-server     : {result.describe()}")
 
     assert cubrid.is_server_started(wsl_name, demodb, settings), (
-        f"`cubrid server start {demodb}` did not bring the database up:\n"
+        f"`cubrid server start {demodb}` should bring the database up, but "
+        "it is not started:\n"
         f"{result.stdout}\n{result.stderr}")
 
     # ----------------------------------------------------------------- #
@@ -207,8 +212,8 @@ def test_ops_002_demodb_sql_smoke_test_connect_select_then_ddl_dml(
     note(f"  OPS-002-catalog    : {result.describe()}")
 
     assert result.ok and result.value == "0", (
-        f"db_class still holds {test_tb} after DROP TABLE: "
-        f"{result.describe()}\n{result.stdout}")
+        f"db_class should no longer list {test_tb} after DROP TABLE, but "
+        f"it does: {result.describe()}\n{result.stdout}")
 
     # ----------------------------------------------------------------- #
     # 7. Clean up -- back to the default: demodb's server down
@@ -255,7 +260,7 @@ def test_ops_003_create_start_and_connect_to_a_new_database(
     # ----------------------------------------------------------------- #
     after = cubrid.databases(wsl_name, settings)
     assert testdb in after, (
-        f"`cubrid createdb` did not register {testdb}; databases.txt lists "
+        f"`cubrid createdb` should register {testdb}, but databases.txt lists "
         f"{list(after)}. Output:\n{result.stdout}\n{result.stderr}")
 
     # ----------------------------------------------------------------- #
@@ -265,7 +270,8 @@ def test_ops_003_create_start_and_connect_to_a_new_database(
     note(f"  OPS-003-server     : {result.describe()}")
 
     assert cubrid.is_server_started(wsl_name, testdb, settings), (
-        f"`cubrid server start {testdb}` did not bring the new database up:\n"
+        f"`cubrid server start {testdb}` should bring the new database up, "
+        "but it is not started:\n"
         f"{result.stdout}\n{result.stderr}")
 
     # ----------------------------------------------------------------- #
@@ -292,8 +298,9 @@ def test_ops_003_create_start_and_connect_to_a_new_database(
     # ----------------------------------------------------------------- #
     remaining = cubrid.databases(wsl_name, settings)
     assert testdb not in remaining, (
-        f"`cubrid deletedb {testdb}` left it registered in databases.txt "
-        f"({list(remaining)}). Output:\n{result.stdout}\n{result.stderr}")
+        f"`cubrid deletedb {testdb}` should unregister it, but databases.txt "
+        f"still lists it ({list(remaining)}). "
+        f"Output:\n{result.stdout}\n{result.stderr}")
 
     assert sorted(remaining) == sorted(before), (
         f"databases.txt reads {list(remaining)} after creating and deleting "

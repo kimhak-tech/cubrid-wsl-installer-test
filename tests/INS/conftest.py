@@ -41,7 +41,8 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
 
         # -- the product's registry record ------------------------------ #
         assert registry.exists(), (
-            rf"the registry key HKCU\{constants.PRODUCT_KEY} is missing")
+            rf"the registry key HKCU\{constants.PRODUCT_KEY} should exist "
+            "after install, but it is missing")
 
         assert registry.wsl_name() == expected_wsl_name, (
             f"the registry records WslName {registry.wsl_name()!r}, "
@@ -54,13 +55,14 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
             f"not {expected_dir}")
 
         assert recorded_dir.is_dir(), (
-            f"InstallDir {recorded_dir} is not on disk")
+            f"InstallDir {recorded_dir} should exist on disk, but it does not")
 
         # -- the distribution ------------------------------------------- #
         entry = distro.find(expected_wsl_name)
         note(f"  post-install : wsl -l -v -> {entry}")
 
-        assert entry, f"`wsl -l -v` does not list {expected_wsl_name!r}"
+        assert entry, (
+            f"`wsl -l -v` should list {expected_wsl_name!r}, but it does not")
 
         assert entry.version == expected_wsl_version, (
             f"{expected_wsl_name!r} is registered at WSL {entry.version}, "
@@ -73,8 +75,8 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
         note(f"  post-install : login environment -> {environment}")
 
         assert not any("\r" in value for value in environment.values()), (
-            "the login environment carries carriage returns, so "
-            f"~/.cubrid.sh has CRLF line endings: {environment}")
+            "~/.cubrid.sh should have LF line endings, but the login "
+            f"environment carries carriage returns: {environment}")
 
         assert environment.get("CUBRID") == constants.CUBRID_HOME, (
             f"$CUBRID is {environment.get('CUBRID')!r}, "
@@ -87,7 +89,7 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
 
         cubrid_bin = f"{constants.CUBRID_HOME}/bin"
         assert cubrid_bin in environment.get("PATH", "").split(":"), (
-            f"$PATH does not contain {cubrid_bin}: "
+            f"$PATH should contain {cubrid_bin}, but it is "
             f"{environment.get('PATH')!r}")
 
         # -- CUBRID itself ---------------------------------------------- #
@@ -103,14 +105,16 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
         note(f"  post-install : service -> {status.describe()}")
 
         assert cubrid.is_service_started(expected_wsl_name, settings), (
-            f"the CUBRID master is not running:\n{status.raw}")
+            "the CUBRID master should be running after install, but status "
+            f"reports:\n{status.raw}")
 
         assert cubrid.is_broker_started(expected_wsl_name, settings), (
-            "the broker is not running with its default brokers:\n"
-            f"{status.raw}")
+            "the broker should be running with its default brokers after "
+            f"install, but status reports:\n{status.raw}")
 
         assert cubrid.is_manager_started(expected_wsl_name, settings), (
-            f"the manager is not running:\n{status.raw}")
+            "the manager should be running after install, but status "
+            f"reports:\n{status.raw}")
 
         has_demodb = cubrid.is_database_exists(
             expected_wsl_name, constants.DEMODB_NAME, settings)
@@ -151,7 +155,8 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
         note(f"  post-install : Apps & Features -> {listed.describe()}")
 
         assert listed.present, (
-            "CUBRID For WSL is not listed in Apps & Features")
+            "CUBRID For WSL should be listed in Apps & Features, "
+            "but it is not")
 
         assert listed.publisher == constants.ARP_PUBLISHER, (
             f"Apps & Features names publisher {listed.publisher!r}, "

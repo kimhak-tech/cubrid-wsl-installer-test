@@ -82,8 +82,8 @@ def test_ins_003_install_with_every_option_changed_via_the_wizard(
     # ActionUpdateInstallFolder sets the derived path before the directory page
     # overrides it, so the payload must have gone to the chosen path ONLY.
     assert not Path(derived_dir).is_dir(), (
-        f"the install went to {install_dir} as chosen, but {derived_dir} -- "
-        "the directory derived from the WSL name -- was created too")
+        f"only the chosen {install_dir} should be created, but {derived_dir} "
+        "-- the directory derived from the WSL name -- was created too")
 
 
 # =============================================================================

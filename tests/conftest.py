@@ -265,35 +265,40 @@ def check_product_absent(note) -> Callable[..., None]:
              f"arp={apps.is_listed()} running={tray.is_running()}")
 
         assert not registry.exists(), (
-            rf"the registry key HKCU\{constants.PRODUCT_KEY} exists after "
-            f"{after}")
+            rf"the registry key HKCU\{constants.PRODUCT_KEY} should not exist "
+            f"after {after}, but it does")
 
         assert not distro.exists(wsl_name), (
-            f"the WSL distribution {wsl_name!r} is registered after {after}")
+            f"the WSL distribution {wsl_name!r} should not be registered after "
+            f"{after}, but it is")
 
         # The Starter is registered UNCONDITIONALLY by the installer, so it
         # must be gone whatever options the install used.
         assert not registry.starter_registered_for_startup(), (
-            f"the Run value {constants.RUN_VALUE_STARTER} exists after "
-            f"{after}")
+            f"the Run value {constants.RUN_VALUE_STARTER} should not exist "
+            f"after {after}, but it does")
 
         assert not registry.tray_registered_for_startup(), (
-            f"the Run value {constants.RUN_VALUE_TRAY} exists after {after}")
+            f"the Run value {constants.RUN_VALUE_TRAY} should not exist "
+            f"after {after}, but it does")
 
         assert not apps.is_listed(), (
-            f"listed in Apps & Features after {after}")
+            f"CUBRID For WSL should not be listed in Apps & Features after "
+            f"{after}, but it is")
 
-        assert not tray.is_running(), f"the Tray is running after {after}"
+        assert not tray.is_running(), (
+            f"the Tray should not be running after {after}, but it is")
 
         if tray_binary is not None:
             assert not tray.binary_exists(tray_binary), (
-                f"the Tray binary is still on disk at {tray_binary} after "
-                f"{after}")
+                f"the Tray binary should be removed after {after}, but it is "
+                f"still on disk at {tray_binary}")
 
         # A leftover ext4.vhdx blocks every later install.
         leftovers = files.leftovers(wsl_name)
         assert not leftovers, (
-            f"{len(leftovers)} artifact(s) on disk after {after}:\n"
+            f"nothing should remain on disk after {after}, but "
+            f"{len(leftovers)} artifact(s) do:\n"
             + "\n".join(f"      {item}" for item in leftovers))
 
     return _check
