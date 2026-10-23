@@ -228,9 +228,8 @@ def test_tra_003_desktop_shortcut_launches_the_tray(suite_installation, note):
     # This is also what proves the shortcut's target: only the installed Tray
     # creates a CUBRIDTrayApp window, and a missing shortcut refuses to open.
     assert tray.wait_for_icon(), (
-        "the Tray's icon should appear after opening its shortcut, but it did "
-        "not "
-        f"(process running: {tray.is_running()})")
+        "the Tray's icon should appear after opening its shortcut, but it "
+        f"did not (process running: {tray.is_running()})")
 
     menu = tray.menu_items()
     assert tuple(menu) == constants.TRAY_MENU_ITEMS, (

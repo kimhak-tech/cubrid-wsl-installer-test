@@ -155,8 +155,8 @@ def check_post_install(installer, settings, note) -> Callable[..., None]:
         note(f"  post-install : Apps & Features -> {listed.describe()}")
 
         assert listed.present, (
-            "CUBRID For WSL should be listed in Apps & Features, but it is "
-            "not")
+            "CUBRID For WSL should be listed in Apps & Features, "
+            "but it is not")
 
         assert listed.publisher == constants.ARP_PUBLISHER, (
             f"Apps & Features names publisher {listed.publisher!r}, "

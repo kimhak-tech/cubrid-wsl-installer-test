@@ -212,9 +212,8 @@ def test_ops_002_demodb_sql_smoke_test_connect_select_then_ddl_dml(
     note(f"  OPS-002-catalog    : {result.describe()}")
 
     assert result.ok and result.value == "0", (
-        f"db_class should no longer list {test_tb} after DROP TABLE, but it "
-        "does: "
-        f"{result.describe()}\n{result.stdout}")
+        f"db_class should no longer list {test_tb} after DROP TABLE, but "
+        f"it does: {result.describe()}\n{result.stdout}")
 
     # ----------------------------------------------------------------- #
     # 7. Clean up -- back to the default: demodb's server down

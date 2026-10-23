@@ -265,26 +265,26 @@ def check_product_absent(note) -> Callable[..., None]:
              f"arp={apps.is_listed()} running={tray.is_running()}")
 
         assert not registry.exists(), (
-            rf"the registry key HKCU\{constants.PRODUCT_KEY} should be "
-            f"removed after {after}, but it still exists")
+            rf"the registry key HKCU\{constants.PRODUCT_KEY} should not exist "
+            f"after {after}, but it does")
 
         assert not distro.exists(wsl_name), (
-            f"the WSL distribution {wsl_name!r} should be unregistered after "
-            f"{after}, but it is still registered")
+            f"the WSL distribution {wsl_name!r} should not be registered after "
+            f"{after}, but it is")
 
         # The Starter is registered UNCONDITIONALLY by the installer, so it
         # must be gone whatever options the install used.
         assert not registry.starter_registered_for_startup(), (
-            f"the Run value {constants.RUN_VALUE_STARTER} should be removed "
-            f"after {after}, but it still exists")
+            f"the Run value {constants.RUN_VALUE_STARTER} should not exist "
+            f"after {after}, but it does")
 
         assert not registry.tray_registered_for_startup(), (
-            f"the Run value {constants.RUN_VALUE_TRAY} should be removed "
-            f"after {after}, but it still exists")
+            f"the Run value {constants.RUN_VALUE_TRAY} should not exist "
+            f"after {after}, but it does")
 
         assert not apps.is_listed(), (
-            f"CUBRID For WSL should be gone from Apps & Features after "
-            f"{after}, but it is still listed")
+            f"CUBRID For WSL should not be listed in Apps & Features after "
+            f"{after}, but it is")
 
         assert not tray.is_running(), (
             f"the Tray should not be running after {after}, but it is")
