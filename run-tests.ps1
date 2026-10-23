@@ -99,17 +99,15 @@ try {
     }
 
     # reports/<stamp>_<scope>, so a single case and a full suite can be told
-    # apart without opening the run: 20261020-103524_all, ..._INS-004. The
-    # scope is the workbook ID as the workbook writes it, whatever spelling
-    # -Case was given in (ins_004, test_ins_004_); otherwise the suite name.
-    # `_` separates the two parts, so nothing inside the scope may use one.
+    # apart without opening the run: 20261020-103524_ALL, ..._INS-004. The
+    # scope is the workbook ID, whatever spelling -Case was given in (ins_004,
+    # test_ins_004_), or else the suite name -- upper case either way, so every
+    # folder reads the same. `_` separates the two parts, so nothing inside the
+    # scope may use one.
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    if ($Case) {
-        $scope = ($Case -replace '^test_', '' -replace '_', '-').Trim('-').ToUpper()
-    } else {
-        $scope = $Suite.ToLower()
-    }
-    $scope  = $scope -replace '[^A-Za-z0-9-]+', '-'
+    if ($Case) { $scope = ($Case -replace '^test_', '' -replace '_', '-').Trim('-') }
+    else       { $scope = $Suite }
+    $scope  = ($scope -replace '[^A-Za-z0-9-]+', '-').ToUpper()
     $runDir = "reports/${stamp}_$scope"
 
     # One pytest session, reporting into $ReportDir.
@@ -155,10 +153,9 @@ try {
         return "$passed passed, $failed failed, $skipped skipped"
     }
 
-    # reports/<stamp>_<scope>/<stamp>_<scope>.html, rendered from the files the
-    # run left there.
-    # A view of junit.xml, never a result of its own, so a failure to render it
-    # is reported and does not change the run's exit code.
+    # reports/<stamp>_<scope>/report.html, rendered from the files the run left
+    # there. A view of junit.xml, never a result of its own, so a failure to
+    # render it is reported and does not change the run's exit code.
     function New-HtmlReport([string]$ReportDir) {
         $out = & $python @($prefix + @('tools/html_report.py', $ReportDir))
         if ($LASTEXITCODE -eq 0) { return '{0,-18} : {1}' -f 'Report', $out }

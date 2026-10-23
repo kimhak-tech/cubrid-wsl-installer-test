@@ -14,7 +14,7 @@
     build is LEFT installed, for manual testing or debugging.
 
     Not a test run: the environment checks run first, as before every suite,
-    and nothing after them is a case. Results go to reports/<stamp>-install/:
+    and nothing after them is a case. Results go to reports/<stamp>_INSTALL/:
     notes.txt, install.json (which build, its SHA-256, under which account),
     and the installer logs.
 
@@ -54,7 +54,7 @@ try {
     $installerArg = @("--installer=$Installer")
 
     $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $runDir = "reports/$stamp-install"
+    $runDir = "reports/${stamp}_INSTALL"
     $checkDir = "$runDir/environment-checks"
     New-Item -ItemType Directory -Force -Path $checkDir | Out-Null
 

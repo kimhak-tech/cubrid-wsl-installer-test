@@ -262,28 +262,29 @@ ever run by path -- and the run ends with separate counts:
 ```text
 Environment checks : 6 passed, 0 failed, 0 skipped
 Cases              : N passed, 0 failed, 0 skipped
-Report             : reports\<run>\<run>.html
+Report             : reports\<run>\report.html
 ```
 
-Only the `Cases` line, `junit.xml` and `<run>.html` count workbook cases.
+Only the `Cases` line, `junit.xml` and `report.html` count workbook cases.
 
 Each run gets its own directory, `reports/<run>/`, where `<run>` is
-`<stamp>_<scope>`: the start time, then what ran -- the suite name, or the
-workbook ID given to `-Case` -- so a single case and a full run are told apart
-by name alone:
+`<stamp>_<scope>`: the start time, then what ran in upper case -- the suite
+name, or the workbook ID given to `-Case` -- so a single case and a full run
+are told apart by name alone:
 
 | Command | `<run>` |
 |---|---|
-| `.\run-tests.ps1 all` | `20261020-103524_all` |
-| `.\run-tests.ps1 tray` | `20261020-103524_tray` |
-| `.\run-tests.ps1 -Case OPS` | `20261020-112010_OPS` |
-| `.\run-tests.ps1 -Case INS-004` | `20261020-111502_INS-004` |
+| `.\run-tests.ps1 all` | `20261020-103524_ALL` |
+| `.\run-tests.ps1 tray` | `20261020-103524_TRAY` |
+| `.\run-tests.ps1 -Case INS` | `20261020-112010_INS` |
+| `.\run-tests.ps1 -Case INS-001` | `20261020-111502_INS-001` |
+| `.\install-build.ps1 -Installer <exe>` | `20261020-120000_INSTALL` |
 
 It holds:
 
 | File | Contents |
 |---|---|
-| `<run>.html` | one page per run, named like its directory so a copy saved elsewhere still says which run: builds, totals, every case with its status and duration, and the reason for each failure or skip |
+| `report.html` | one page per run: builds, totals, every case with its status and duration, and the reason for each failure or skip |
 | `run.json` | which bundle (path + SHA-256), which account, and elevated or not |
 | `junit.xml` | machine-readable results, workbook cases only |
 | `environment-checks/` | the check session's own `junit.xml` and `run.json` |
@@ -291,7 +292,7 @@ It holds:
 
 ### HTML report
 
-Open `<run>.html` in a browser to read a run at a glance. It shows:
+Open `report.html` in a browser to read a run at a glance. It shows:
 
 | Section | Contents |
 |---|---|
@@ -332,7 +333,7 @@ is counted or judged. Needs an elevated PowerShell.
 If something did not come up within five minutes, `notes.txt` says "did NOT
 fully settle" -- check it before using the machine.
 
-Results go to `reports/<timestamp>-install/`: `install.json` (which build,
+Results go to `reports/<timestamp>_INSTALL/`: `install.json` (which build,
 SHA-256, account, result), `notes.txt`, and the installer logs.
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require
