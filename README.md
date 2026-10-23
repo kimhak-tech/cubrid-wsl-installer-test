@@ -104,7 +104,7 @@ cubrid-wsl-installer-test/
 ├── tools/
 │   ├── common.ps1             # Python probe + elevation check, for both scripts
 │   ├── install_build.py       # The install behind install-build.ps1
-│   └── html_report.py         # reports/<stamp>/report.html from the run's files
+│   └── html_report.py         # reports/<run>/report.html from the run's files
 └── reports/                   # Test results (gitignored)
 ```
 
@@ -262,12 +262,25 @@ ever run by path -- and the run ends with separate counts:
 ```text
 Environment checks : 6 passed, 0 failed, 0 skipped
 Cases              : N passed, 0 failed, 0 skipped
-Report             : reports\<timestamp>\report.html
+Report             : reports\<run>\report.html
 ```
 
 Only the `Cases` line, `junit.xml` and `report.html` count workbook cases.
 
-Test results are stored under `reports/<timestamp>/`:
+Each run gets its own directory, `reports/<run>/`, where `<run>` is
+`<stamp>_<scope>`: the start time, then what ran in upper case -- the suite
+name, or the workbook ID given to `-Case` -- so a single case and a full run
+are told apart by name alone:
+
+| Command | `<run>` |
+|---|---|
+| `.\run-tests.ps1 all` | `20261020-103524_ALL` |
+| `.\run-tests.ps1 tray` | `20261020-103524_TRAY` |
+| `.\run-tests.ps1 -Case INS` | `20261020-112010_INS` |
+| `.\run-tests.ps1 -Case INS-001` | `20261020-111502_INS-001` |
+| `.\install-build.ps1 -Installer <exe>` | `20261020-120000_INSTALL` |
+
+It holds:
 
 | File | Contents |
 |---|---|
@@ -298,7 +311,7 @@ cannot disagree with them. A failure to render it is reported but does not
 change the run's exit code. To render it again for any earlier run:
 
 ```powershell
-python tools/html_report.py reports/<timestamp>
+python tools/html_report.py reports/<run>
 ```
 
 ### Installing a build without running tests
@@ -320,7 +333,7 @@ is counted or judged. Needs an elevated PowerShell.
 If something did not come up within five minutes, `notes.txt` says "did NOT
 fully settle" -- check it before using the machine.
 
-Results go to `reports/<timestamp>-install/`: `install.json` (which build,
+Results go to `reports/<timestamp>_INSTALL/`: `install.json` (which build,
 SHA-256, account, result), `notes.txt`, and the installer logs.
 
 > **Warning:** Installation tests modify the Windows/WSL environment and require

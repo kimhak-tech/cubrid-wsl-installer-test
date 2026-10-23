@@ -13,7 +13,7 @@
     as its own pytest session -- for every suite and every -Case; -CollectOnly
     only lists. A failure there stops the run before anything is installed.
     The checks are not test cases, so the case session's pass count and
-    reports/<stamp>/junit.xml hold workbook cases only.
+    reports/<stamp>_<scope>/junit.xml hold workbook cases only.
 
     Suites are described by what they SELECT, never by a list of case IDs: a
     list here goes stale the day a case is added and nothing fails when it does.
@@ -98,15 +98,24 @@ try {
         }
     }
 
-    $stamp  = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $runDir = "reports/$stamp"
+    # reports/<stamp>_<scope>, so a single case and a full suite can be told
+    # apart without opening the run: 20261020-103524_ALL, ..._INS-004. The
+    # scope is the workbook ID, whatever spelling -Case was given in (ins_004,
+    # test_ins_004_), or else the suite name -- upper case either way, so every
+    # folder reads the same. `_` separates the two parts, so nothing inside the
+    # scope may use one.
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    if ($Case) { $scope = ($Case -replace '^test_', '' -replace '_', '-').Trim('-') }
+    else       { $scope = $Suite }
+    $scope  = ($scope -replace '[^A-Za-z0-9-]+', '-').ToUpper()
+    $runDir = "reports/${stamp}_$scope"
 
     # One pytest session, reporting into $ReportDir.
     #
     # Each session gets its own directory because conftest writes run.json
     # beside the --junitxml path, and INS-002 takes a LATER run's baseline from
-    # reports/<stamp>/run.json and junit.xml. Those two files must be the CASE
-    # session's; a check session writing there would replace them.
+    # reports/<stamp>_<scope>/run.json and junit.xml. Those two files must be
+    # the CASE session's; a check session writing there would replace them.
     #
     # --basetemp keeps pytest's scratch inside this run's own directory.
     # Without it pytest shares %LOCALAPPDATA%\Temp\pytest-of-<user>, where files
@@ -144,9 +153,9 @@ try {
         return "$passed passed, $failed failed, $skipped skipped"
     }
 
-    # reports/<stamp>/report.html, rendered from the files the run left there.
-    # A view of junit.xml, never a result of its own, so a failure to render it
-    # is reported and does not change the run's exit code.
+    # reports/<stamp>_<scope>/report.html, rendered from the files the run left
+    # there. A view of junit.xml, never a result of its own, so a failure to
+    # render it is reported and does not change the run's exit code.
     function New-HtmlReport([string]$ReportDir) {
         $out = & $python @($prefix + @('tools/html_report.py', $ReportDir))
         if ($LASTEXITCODE -eq 0) { return '{0,-18} : {1}' -f 'Report', $out }

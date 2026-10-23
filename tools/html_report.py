@@ -1,9 +1,9 @@
 """Render one run's results as a single HTML page.
 
-    python tools/html_report.py reports/<stamp>
+    python tools/html_report.py reports/<stamp>_<scope>
 
-Writes reports/<stamp>/report.html from the files the run already left there:
-junit.xml for the cases, run.json for the builds and the machine, and
+Writes reports/<stamp>_<scope>/report.html from the files the run already left
+there: junit.xml for the cases, run.json for the builds and the machine, and
 environment-checks/junit.xml only when no case ran. The page is a VIEW of
 those files, never a second record of the result -- it can be regenerated for
 any past run, and it cannot disagree with junit.xml.
@@ -330,7 +330,8 @@ def render(run_dir: Path) -> Path:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: python tools/html_report.py reports/<stamp>", file=sys.stderr)
+        print("usage: python tools/html_report.py reports/<stamp>_<scope>",
+              file=sys.stderr)
         return 2
     run_dir = Path(argv[1])
     if not run_dir.is_dir():
