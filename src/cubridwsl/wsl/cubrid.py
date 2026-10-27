@@ -591,6 +591,14 @@ def install_engine(name: str, filename: str, settings: dict[str, Any], *,
     `args` passes installer options: CPack self-extracting archives, which this
     is, accept `--skip-license` and `--exclude-subdir`.
 
+    **`--prefix="$CUBRID"` is what puts the engine OVER the installed one.**
+    The installer extracts into its working directory -- the guest home, since
+    `run` starts there -- unless told otherwise, and then rewrites
+    `~/.cubrid.sh` to point at wherever it extracted. Without the prefix the
+    new engine lands BESIDE `$CUBRID`, the environment switches to it with an
+    empty `databases`, and the old engine's still-running `cub_manager` keeps
+    port 8001, so the next `cubrid service start` fails on the manager.
+
     It does NOT stop CUBRID first -- the engine is replaced underneath a
     RUNNING service, which is what OPS-004 exercises.
     """
@@ -599,7 +607,7 @@ def install_engine(name: str, filename: str, settings: dict[str, Any], *,
     return run(name,
                f"chmod +x -- {quoted} && "
                f"{{ yes {shlex.quote(constants.ENGINE_INSTALLER_ANSWER)} "
-               f"| ./{quoted}{options}; }}",
+               f"| ./{quoted} --prefix=\"$CUBRID\"{options}; }}",
                settings, timeout=timeout)
 
 

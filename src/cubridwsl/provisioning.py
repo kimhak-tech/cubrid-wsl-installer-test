@@ -13,9 +13,9 @@ body here with `yield from`, which passes on the value:
 
     # tests/<CATEGORY>/conftest.py
     @pytest.fixture(scope="module")        # or "package", for a group of files
-    def suite_installation(installer, settings, run_dir, note):
+    def suite_installation(installer, settings, run_dir, note, skip_install):
         yield from provide_installation(installer, settings, run_dir, note,
-                                        "<label>")
+                                        "<label>", skip_install=skip_install)
 
 Sharing one installation is only sound for cases that do not CONSUME it. A case
 whose subject is the removal of the product must install for itself, or the
@@ -35,7 +35,7 @@ from typing import Any, Callable, Iterator
 from . import config as config_mod
 from . import preflight
 from .drivers import silent
-from .windows import registry
+from .windows import apps, registry
 
 Note = Callable[[str], None]
 
@@ -56,7 +56,8 @@ class InstalledProduct:
 
 def provide_installation(installer: config_mod.InstallerPackage,
                          settings: dict[str, Any], run_dir: Path, note: Note,
-                         label: str) -> Iterator[InstalledProduct]:
+                         label: str, *, skip_install: bool = False
+                         ) -> Iterator[InstalledProduct]:
     """Install, and hand the installation to a group of cases. Never removes it.
 
     `label` names the group in the run notes and prefixes its two logs, so two
@@ -67,9 +68,50 @@ def provide_installation(installer: config_mod.InstallerPackage,
     `uninstall_cubrid_wsl` returns without running the bundle when nothing is
     registered. It is also what removes the installation an earlier group or
     run left behind.
+
+    `skip_install=True` (`-SkipInstall`) hands over the installation already
+    on the machine instead, untouched -- see `existing_installation`.
     """
+    if skip_install:
+        yield existing_installation(installer, note, label)
+        return
     note(f"== provisioning one installation for the {label} cases ==")
     yield install_fresh(installer, settings, run_dir, note, f"{label}-shared")
+
+
+def existing_installation(installer: config_mod.InstallerPackage, note: Note,
+                          label: str) -> InstalledProduct:
+    """The installation already on the machine, refused unless it is `installer`.
+
+    The run reports `installer` as the build under test and cases compare the
+    product against it (TRA-001 reads its version off the About box), so a
+    different installed build would make both wrong. The build is identified
+    by its BundleId, which Burn regenerates on every build: the filename is
+    not an identity, since a rebuild reuses it.
+
+    The machine is reused exactly as an earlier run left it -- after OPS-004
+    that includes the replaced CUBRID engine.
+    """
+    preflight.require_windows()
+    preflight.require_elevation()
+
+    note(f"== {label}: using the installation already on the machine "
+         f"(-SkipInstall: nothing uninstalled or installed) ==")
+    assert registry.exists(), (
+        "CUBRID for WSL should already be installed for -SkipInstall, but "
+        "nothing is installed -- run without -SkipInstall to install one")
+
+    entry = apps.read()
+    note(f"  existing   : {entry.describe()}, distro {registry.wsl_name()!r}")
+    assert entry.bundle_id == installer.bundle_id, (
+        "the installed build should be the configured installer, but it is "
+        "another build:\n"
+        f"      installed  : BundleId {entry.bundle_id}\n"
+        f"      configured : BundleId {installer.bundle_id}  {installer.path}\n"
+        "Pass the installed build with -Installer, or run without "
+        "-SkipInstall to reinstall")
+
+    return InstalledProduct(package=installer, wsl_name=registry.wsl_name())
 
 
 def install_fresh(installer: config_mod.InstallerPackage,

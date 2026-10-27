@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import struct
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,15 @@ INSTALLER_RE = re.compile(
     r"(?P<installer_version>[0-9][0-9.]*)-(?P<build>[0-9]+)-win64\.exe$",
     re.IGNORECASE,
 )
+
+
+# A WiX Burn bundle carries a `.wixburn` PE section that starts with this magic,
+# a version, then the BundleId -- a GUID regenerated on EVERY build. It is the
+# only identity the cached copy Burn keeps of an installed bundle shares with
+# the original: that copy is stripped of its payload (~700 KB against ~390 MB),
+# so its bytes and SHA-256 never match.
+_BURN_SECTION = b".wixburn"
+_BURN_MAGIC = 0x00F14300          # WiX's BURN_SECTION_MAGIC
 
 
 class ConfigError(RuntimeError):
@@ -99,6 +110,7 @@ class InstallerPackage:
     installer_version: str = ""
     build: str = ""
     _sha256: str | None = field(default=None, repr=False)
+    _bundle_id: str | None = field(default=None, repr=False)
 
     @property
     def sha256(self) -> str:
@@ -110,12 +122,19 @@ class InstallerPackage:
             self._sha256 = digest.hexdigest()
         return self._sha256
 
+    @property
+    def bundle_id(self) -> str:
+        """The Burn BundleId, `{xxxxxxxx-...}` in lower case."""
+        if self._bundle_id is None:
+            self._bundle_id = read_bundle_id(self.path)
+        return self._bundle_id
+
     def as_dict(self) -> dict[str, Any]:
         """Which build, for a run's JSON record: run.json and install.json."""
         return {"path": str(self.path), "size": self.size,
                 "sha256": self.sha256, "cubrid_version": self.cubrid_version,
                 "installer_version": self.installer_version,
-                "build": self.build}
+                "build": self.build, "bundle_id": self.bundle_id}
 
     def describe(self) -> str:
         # The version clause is dropped rather than printed empty for a bundle
@@ -208,3 +227,31 @@ def resolve_alternate_installer(settings: dict[str, Any]) -> InstallerPackage:
     match = INSTALLER_RE.match(path.name)
     return InstallerPackage(path=path, size=path.stat().st_size,
                             **(match.groupdict() if match else {}))
+
+
+def read_bundle_id(path: Path) -> str:
+    """The BundleId out of a Burn bundle's `.wixburn` section.
+
+    Works on the original installer and on the stripped copy Burn caches, so
+    "is THIS build installed" can be answered without reading 390 MB.
+    """
+    with Path(path).open("rb") as fh:
+        head = fh.read(64 * 1024)                 # DOS + PE headers, section table
+        try:
+            pe = struct.unpack_from("<I", head, 0x3C)[0]
+            if head[pe:pe + 4] != b"PE\0\0":
+                raise ConfigError(f"not a Windows executable: {path}")
+            sections = struct.unpack_from("<H", head, pe + 6)[0]
+            table = pe + 24 + struct.unpack_from("<H", head, pe + 20)[0]
+            for index in range(sections):
+                entry = table + 40 * index
+                if head[entry:entry + 8].rstrip(b"\0") != _BURN_SECTION:
+                    continue
+                fh.seek(struct.unpack_from("<I", head, entry + 20)[0])
+                section = fh.read(24)
+                if struct.unpack_from("<I", section, 0)[0] != _BURN_MAGIC:
+                    break
+                return "{%s}" % uuid.UUID(bytes_le=section[8:24])
+        except struct.error as exc:
+            raise ConfigError(f"unreadable executable header: {path}") from exc
+    raise ConfigError(f"not a WiX Burn bundle (no BundleId): {path}")

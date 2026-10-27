@@ -49,6 +49,9 @@ class Entry:
     publisher: str | None = None
     uninstall_string: str | None = None
     location: str | None = None
+    # The entry's key name. For a Burn bundle that IS its BundleId, which is
+    # regenerated on every build -- so it says which build is installed.
+    bundle_id: str | None = None
     # How many entries matched. A duplicate left behind by a failed uninstall
     # is worth seeing rather than silently taking the first one.
     count: int = 0
@@ -98,7 +101,8 @@ def _read(display_name: str) -> Entry:
                         display_version=entry_values.get("DisplayVersion"),
                         publisher=entry_values.get("Publisher"),
                         uninstall_string=entry_values.get("UninstallString"),
-                        location=f"{hive_name}\\{base}\\{sub}"))
+                        location=f"{hive_name}\\{base}\\{sub}",
+                        bundle_id=sub.lower()))
         except OSError:
             continue
 
@@ -109,7 +113,8 @@ def _read(display_name: str) -> Entry:
                  display_version=first.display_version,
                  publisher=first.publisher,
                  uninstall_string=first.uninstall_string,
-                 location=first.location, count=len(matches))
+                 location=first.location, bundle_id=first.bundle_id,
+                 count=len(matches))
 
 
 def is_listed() -> bool:

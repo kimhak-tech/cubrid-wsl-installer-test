@@ -241,6 +241,26 @@ every shared installation starts by uninstalling whatever is there, so a
 left-over installation never reaches the next run. To remove it by hand, use
 Apps & Features.
 
+To run cases against the installation already on the machine, add
+`-SkipInstall`. Nothing is uninstalled or installed:
+
+```powershell
+.\run-tests.ps1 -Case OPS-001 -SkipInstall
+```
+
+- Only OPS and TRA run. INS-001…006 and LCM-002…004 are reported as skipped,
+  each with its reason: they need an installation of their own.
+- LCM-001 runs only when it is the one case selected,
+  `.\run-tests.ps1 -Case LCM-001 -SkipInstall`: it uninstalls the existing
+  build and verifies it is gone, so the machine is left with nothing
+  installed. In any larger run it is skipped.
+- If nothing is installed, or the installed build is not the configured
+  installer, the cases fail with a message saying so. Builds are compared by
+  their BundleId, which changes on every build, so two builds with the same
+  filename are told apart.
+- The machine is used exactly as the last run left it. After OPS-004, that
+  includes its replaced CUBRID engine.
+
 The bundle's UI mode is **not** a runner option. Each driver pins its own, and
 the choice is not cosmetic: `/passive` runs the installer's environment checks
 while `/quiet` skips them, so a case that names one has to keep it. Cleanup

@@ -38,6 +38,11 @@ _RUN_FACTS: dict[str, Any] = {}
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--installer", default=None,
                      help="Path to the installer bundle, overriding installer.path.")
+    parser.addoption("--skip-install", action="store_true",
+                     help="Run the cases against the installation already on "
+                          "the machine -- nothing is uninstalled or installed. "
+                          "Cases that need an installation of their own are "
+                          "skipped (_SKIPPED_CASES_WITH_SKIP_INSTALL).")
 
 
 # The category and case number in a test function name,
@@ -69,14 +74,62 @@ def _group_key(item: pytest.Item) -> tuple[int, str, int]:
     return (action, category, number)
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config,
+                                  items: list[pytest.Item]) -> None:
     """Run the cases in the order their shared installations require.
 
     Collection order is alphabetical by path, which says nothing about what a
     case needs -- see `_group_key`. The sort is stable, so cases that share a
     key keep their collection order.
+
+    Under `--skip-install`, every case `_SKIPPED_CASES_WITH_SKIP_INSTALL` names
+    is skipped. `trylast` so that `items` is the FINAL selection, after `-k`
+    has deselected: whether LCM-001 runs alone is decided on what will run.
     """
     items.sort(key=_group_key)
+    if not config.getoption("--skip-install"):
+        return
+    alone = len(items) == 1
+    for item in items:
+        match = _CASE_ID.match(item.name)
+        if match is None:
+            continue
+        case = f"{match.group(1).upper()}-{int(match.group(2)):03d}"
+        why = _SKIPPED_CASES_WITH_SKIP_INSTALL.get(case)
+        if case == "LCM-001" and alone:
+            why = None
+        if why:
+            item.add_marker(pytest.mark.skip(reason=f"{case}: {why}"))
+
+
+_FRESH_INSTALL_SKIP_MSG = ("Requires a fresh installation to verify installer "
+                           "behavior")
+_RUN_ALONE_SKIP_MSG = ("Uninstalls the existing installation; run it alone "
+                       "with -Case LCM-001 -SkipInstall")
+_SAME_BUNDLE_SKIP_MSG = ("Requires a fresh installation by the same bundle to "
+                         "verify its maintenance page")
+_OWN_BUNDLE_A_SKIP_MSG = ("Requires its own installation of Bundle A to verify "
+                          "a different bundle is refused")
+
+# The cases -SkipInstall skips, each with the reason it prints. OPS and TRA are
+# absent -- they only USE an installation, so they run on the one already
+# there. A new case that installs or removes the product must be added here.
+#
+# LCM-001 runs only when it is the one case selected: it uninstalls the build,
+# and every case after it in a larger run would find nothing installed.
+_SKIPPED_CASES_WITH_SKIP_INSTALL = {
+    "INS-001": _FRESH_INSTALL_SKIP_MSG,
+    "INS-002": _FRESH_INSTALL_SKIP_MSG,
+    "INS-003": _FRESH_INSTALL_SKIP_MSG,
+    "INS-004": _FRESH_INSTALL_SKIP_MSG,
+    "INS-005": _FRESH_INSTALL_SKIP_MSG,
+    "INS-006": _FRESH_INSTALL_SKIP_MSG,
+    "LCM-001": _RUN_ALONE_SKIP_MSG,
+    "LCM-002": _SAME_BUNDLE_SKIP_MSG,
+    "LCM-003": _OWN_BUNDLE_A_SKIP_MSG,
+    "LCM-004": _OWN_BUNDLE_A_SKIP_MSG,
+}
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
@@ -174,6 +227,12 @@ def run_dir(request) -> Path:
 
 
 @pytest.fixture(scope="session")
+def skip_install(request) -> bool:
+    """True under `--skip-install`: reuse what is installed."""
+    return request.config.getoption("--skip-install")
+
+
+@pytest.fixture(scope="session")
 def note() -> Callable[[str], None]:
     """Record a line that must appear even when the test passes.
 
@@ -203,6 +262,7 @@ def run_report(run_dir, request) -> dict[str, Any]:
         # top-level field could only repeat ONE of them while claiming to
         # describe the run.
         **preflight.describe(),
+        "skip_install": request.config.getoption("--skip-install"),
     })
     _write_json(path, _RUN_FACTS)
 

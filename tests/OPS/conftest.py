@@ -14,8 +14,8 @@ from cubridwsl.provisioning import InstalledProduct, provide_installation
 
 
 @pytest.fixture(scope="module")
-def suite_installation(installer, settings, run_dir,
-                       note) -> Iterator[InstalledProduct]:
+def suite_installation(installer, settings, run_dir, note,
+                       skip_install) -> Iterator[InstalledProduct]:
     """One installation for every case in test_ops_cubrid_operational.py.
 
         uninstall  ->  install  ->  OPS-001 .. OPS-004
@@ -32,4 +32,5 @@ def suite_installation(installer, settings, run_dir,
     nothing undoes it. The machine is left upgraded; the next group's opening
     uninstall replaces it.
     """
-    yield from provide_installation(installer, settings, run_dir, note, "ops")
+    yield from provide_installation(installer, settings, run_dir, note, "ops",
+                                    skip_install=skip_install)

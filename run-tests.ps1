@@ -21,6 +21,13 @@
     with one it lists what that suite would run.
 
     One case by its ID:   .\run-tests.ps1 -Case INS-001
+
+    Against the installation already on the machine -- nothing is
+    uninstalled or installed:
+                          .\run-tests.ps1 -Case OPS-001 -SkipInstall
+    Only OPS and TRA run, plus LCM-001 when it is the one case selected (it
+    uninstalls the build); every other case is skipped. The run refuses if
+    the installed build is not the configured installer.
 #>
 [CmdletBinding()]
 param(
@@ -35,6 +42,10 @@ param(
     [string]$Case,
 
     [string]$Installer,
+
+    # Run against the installation already on the machine: nothing is
+    # uninstalled or installed.
+    [switch]$SkipInstall,
 
     # List what WOULD run, and stop. The only risk-free way to check a filter
     # against a suite that installs and uninstalls the product.
@@ -168,8 +179,12 @@ try {
         foreach ($line in $summary) { Write-Host $line }
     }
 
+    # The CASE session's only: the environment checks install nothing.
+    $caseArgs = @()
+    if ($SkipInstall) { $caseArgs += '--skip-install' }
+
     if ($CollectOnly) {
-        Invoke-Pytest $selection $runDir @('--collect-only', '-q')
+        Invoke-Pytest $selection $runDir ($caseArgs + @('--collect-only', '-q'))
         exit $LASTEXITCODE
     }
 
@@ -191,7 +206,7 @@ try {
         exit 0
     }
 
-    Invoke-Pytest $selection $runDir
+    Invoke-Pytest $selection $runDir $caseArgs
     $code = $LASTEXITCODE
     $summary += '{0,-18} : {1}' -f 'Cases', (Get-Counts $runDir)
     $summary += New-HtmlReport $runDir
