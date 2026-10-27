@@ -9,8 +9,8 @@ from cubridwsl.provisioning import InstalledProduct, provide_installation
 
 
 @pytest.fixture(scope="module")
-def suite_installation(installer, settings, run_dir,
-                       note) -> Iterator[InstalledProduct]:
+def suite_installation(installer, settings, run_dir, note,
+                       skip_install) -> Iterator[InstalledProduct]:
     """One installation for every case in this module.
 
         uninstall  ->  install  ->  LCM-003  ->  LCM-004
@@ -23,4 +23,5 @@ def suite_installation(installer, settings, run_dir,
     Module scope because this module IS the group, so it installs once for
     both cases.
     """
-    yield from provide_installation(installer, settings, run_dir, note, "lcm")
+    yield from provide_installation(installer, settings, run_dir, note, "lcm",
+                                    skip_install=skip_install)

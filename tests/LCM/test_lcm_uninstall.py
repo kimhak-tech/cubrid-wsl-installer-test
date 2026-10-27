@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from cubridwsl import provisioning
 from cubridwsl.drivers import silent, wizard
 from cubridwsl.windows import apps, registry, tray
 
@@ -30,21 +31,30 @@ pytestmark = [pytest.mark.destructive]
 
 @pytest.mark.silent
 def test_lcm_001_uninstall_through_apps_and_features(installer, settings,
-                                                     run_dir, note,
+                                                     run_dir, note, skip_install,
                                                      check_product_absent):
 
-    # ----------------------------------------------------------------- #
-    # 1. Clean up -- remove anything an earlier run left behind
-    # ----------------------------------------------------------------- #
-    silent.uninstall_cubrid_wsl(installer, settings, run_dir / "01-cleanup.log", note=note)
+    if skip_install:
+        # ------------------------------------------------------------- #
+        # 1-2. Set up -- the installation already on the machine
+        # ------------------------------------------------------------- #
+        # Reached only as `-Case LCM-001 -SkipInstall`: in a larger selection
+        # the conftest skips this case, since the uninstall below would leave
+        # every later case with nothing installed.
+        provisioning.existing_installation(installer, note, "LCM-001")
+    else:
+        # ------------------------------------------------------------- #
+        # 1. Clean up -- remove anything an earlier run left behind
+        # ------------------------------------------------------------- #
+        silent.uninstall_cubrid_wsl(installer, settings, run_dir / "01-cleanup.log", note=note)
 
-    # ----------------------------------------------------------------- #
-    # 2. Set up -- install CUBRID for WSL, so there is something to remove
-    # ----------------------------------------------------------------- #
-    silent.install_cubrid_wsl(installer, settings, run_dir / "02-setup.log", note=note)
+        # ------------------------------------------------------------- #
+        # 2. Set up -- install CUBRID for WSL, so there is something to remove
+        # ------------------------------------------------------------- #
+        silent.install_cubrid_wsl(installer, settings, run_dir / "02-setup.log", note=note)
 
-    if not registry.exists():
-        pytest.fail("CUBRID for WSL is not installed after the set-up step")
+        if not registry.exists():
+            pytest.fail("CUBRID for WSL is not installed after the set-up step")
 
     # Read now -- the uninstall removes the key that carries both.
     wsl_name = registry.wsl_name()

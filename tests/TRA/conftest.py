@@ -16,8 +16,8 @@ AWAITED = constants.SERVICE_COMPONENTS_AWAITED
 
 
 @pytest.fixture(scope="module")
-def suite_installation(installer, settings, run_dir,
-                       note) -> Iterator[InstalledProduct]:
+def suite_installation(installer, settings, run_dir, note,
+                       skip_install) -> Iterator[InstalledProduct]:
     """One installation for every case in test_tra_control_tray.py.
 
         uninstall  ->  install  ->  TRA-001 .. TRA-004
@@ -29,7 +29,8 @@ def suite_installation(installer, settings, run_dir,
     The Tray is left running with the installation. `tray.launch` starts it
     detached, so it holds none of the runner's console handles.
     """
-    yield from provide_installation(installer, settings, run_dir, note, "tra")
+    yield from provide_installation(installer, settings, run_dir, note, "tra",
+                                    skip_install=skip_install)
 
 
 @pytest.fixture

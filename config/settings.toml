@@ -94,8 +94,10 @@ url = "https://ftp.cubrid.org/CUBRID_Engine/11.4.5/CUBRID-11.4.5.1866-e9c17f7-Li
 # and BOTH of these are needed:
 #
 #   --skip-license    accepts the licence without a prompt.
-#   --exclude-subdir  extracts into the working directory instead of a
-#                     VERSIONED subdirectory. This one matters just as much:
+#   --exclude-subdir  extracts into the install directory itself instead of a
+#                     VERSIONED subdirectory. (The install directory is
+#                     $CUBRID: `wsl.cubrid.install_engine` always adds
+#                     --prefix="$CUBRID".) This one matters just as much:
 #                     CPack asks "Do you want to include the subdirectory
 #                     CUBRID-11.4.5.1866-...?" and a repeated "y" ACCEPTS it,
 #                     putting the engine in ~/CUBRID-11.4.5.1866-.../ instead
