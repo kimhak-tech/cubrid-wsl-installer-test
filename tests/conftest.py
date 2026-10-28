@@ -83,24 +83,39 @@ def pytest_collection_modifyitems(config: pytest.Config,
     case needs -- see `_group_key`. The sort is stable, so cases that share a
     key keep their collection order.
 
-    Under `--skip-install`, every case `_SKIPPED_CASES_WITH_SKIP_INSTALL` names
-    is skipped. `trylast` so that `items` is the FINAL selection, after `-k`
-    has deselected: whether LCM-001 runs alone is decided on what will run.
+    A case listed in config/excluded_cases.conf is skipped, unless it is the
+    one case selected: naming it alone is asking for it. Under
+    `--skip-install`, every case `_SKIPPED_CASES_WITH_SKIP_INSTALL` names is
+    skipped as well, selected alone or not -- except LCM-001. `trylast` so
+    that `items` is the FINAL selection, after `-k` has deselected: whether a
+    case runs alone is decided on what will run.
     """
     items.sort(key=_group_key)
-    if not config.getoption("--skip-install"):
-        return
+    try:
+        excluded = config_mod.load_excluded_cases()
+    except config_mod.ConfigError as exc:
+        raise pytest.UsageError(str(exc)) from None
+    skip_install = config.getoption("--skip-install")
     alone = len(items) == 1
     for item in items:
         match = _CASE_ID.match(item.name)
         if match is None:
             continue
         case = f"{match.group(1).upper()}-{int(match.group(2)):03d}"
-        why = _SKIPPED_CASES_WITH_SKIP_INSTALL.get(case)
-        if case == "LCM-001" and alone:
+        if case in excluded and not alone:
+            why = "listed in config/excluded_cases.conf"
+        elif skip_install and not (case == "LCM-001" and alone):
+            why = _SKIPPED_CASES_WITH_SKIP_INSTALL.get(case)
+        else:
             why = None
         if why:
             item.add_marker(pytest.mark.skip(reason=f"{case}: {why}"))
+        elif case in excluded:
+            # Not `_note`: collection output is not captured, so its print
+            # would show the line twice.
+            _NOTES.append(f"  excluded   : {case} is listed in "
+                          f"config/excluded_cases.conf but is not skipped, "
+                          f"because it was selected alone")
 
 
 _FRESH_INSTALL_SKIP_MSG = ("Requires a fresh installation to verify installer "
