@@ -58,6 +58,7 @@ cubrid-wsl-installer-test/
 ├── pyproject.toml             # Dependencies and pytest configuration
 ├── config/
 │   ├── settings.toml          # Framework defaults
+│   ├── excluded_cases.conf    # Cases to skip in every run
 │   └── settings.local.toml    # Local machine settings (gitignored)
 ├── src/cubridwsl/
 │   ├── drivers/
@@ -234,6 +235,23 @@ the current inventory:
 What each case asserts is in its own file's docstring, under `Verifies:`.
 
 Other options: `-Installer <path>` for a one-off build.
+
+To leave a case out of every run, add its ID to `config/excluded_cases.conf`,
+one per line:
+
+```text
+OPS-004
+```
+
+`.\run-tests.ps1 all` then reports OPS-004 as skipped, with the reason
+`listed in config/excluded_cases.conf`. The same applies to the other suites,
+`-SkipInstall` and a whole category (`-Case OPS`). Delete the line or comment
+it out with `#` to run the case again. A line that is not a case ID stops the
+run with an error.
+
+A listed case still runs when it is the one case selected,
+`.\run-tests.ps1 -Case OPS-004`: naming it alone is asking for it. The run
+notes say the file was overridden.
 
 **The machine is left installed after a run**, so a failure can be examined on
 the machine that produced it. Nothing is uninstalled at the end: every case and

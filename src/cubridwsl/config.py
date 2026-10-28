@@ -69,6 +69,38 @@ def load_settings(config_dir: Path | None = None) -> dict[str, Any]:
     return settings
 
 
+# A workbook case ID, as excluded_cases.conf lists it: OPS-004.
+_WORKBOOK_ID = re.compile(r"[A-Z]{3}-\d{3}")
+
+
+def load_excluded_cases() -> set[str]:
+    """The case IDs listed in excluded_cases.conf; none if the file is absent.
+
+    A line that is not a case ID is refused rather than ignored: a mistyped
+    exclusion would otherwise let the case run with nothing to say so.
+    """
+    path = CONFIG_DIR / "excluded_cases.conf"
+    if not path.is_file():
+        return set()
+    # utf-8-sig: Windows PowerShell 5.1 and Notepad write a BOM, which
+    # strip() keeps and line 1 would then be refused for.
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raise ConfigError(f"{path} is not UTF-8; save it as UTF-8") from None
+    excluded = set()
+    for number, line in enumerate(text.splitlines(), start=1):
+        entry = line.split("#", 1)[0].strip().upper()
+        if not entry:
+            continue
+        if not _WORKBOOK_ID.fullmatch(entry):
+            raise ConfigError(
+                f"{path}, line {number}: {line.strip()!r} is not a case ID "
+                f"such as OPS-004")
+        excluded.add(entry)
+    return excluded
+
+
 # The keys under [installer] that name a file on THIS machine. Both must stay
 # empty in the tracked settings.toml; the environment checks enforce it by
 # reading this tuple, so a third bundle added later is covered without an edit
